@@ -1,0 +1,33 @@
+[package]
+name = "crabwurcs-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core WURCS grammar parser/writer and the internal glycan graph model shared by all crabWURCS crates"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+petgraph = { workspace = true }
+nom = { workspace = true }
+serde = { workspace = true, optional = true }
+# Not used directly by this crate's code — pinned here only so Cargo's
+# resolver picks compatible versions for petgraph's transitive dependency
+# on hashbrown (see the comment in the workspace root Cargo.toml). Safe to
+# remove once building on a current toolchain.
+indexmap = { workspace = true }
+hashbrown = { workspace = true }
+
+[features]
+default = ["serde"]
+# Enables serde Serialize/Deserialize on the core model types, so
+# downstream consumers (e.g. a web API) can pass ResidueGraph over JSON.
+serde = ["dep:serde", "petgraph/serde-1"]
+
+[dev-dependencies]
+serde_json = "1"
+crabwurcs-iupac = { workspace = true }

@@ -1,0 +1,65 @@
+[workspace]
+resolver = "2"
+members = [
+    "crabwurcs-core",
+    "crabwurcs-iupac",
+    "crabwurcs-mol",
+    "crabwurcs-pdb",
+    "crabwurcs-snfg",
+    "crabwurcs",
+    "crabwurcs-cli",
+]
+
+# Shared metadata inherited by member crates via `<field>.workspace = true`.
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+authors = ["crabWURCS contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/CHANGEME/crabwurcs"
+description = "A pure-Rust toolkit for glycan notation conversion, chemical-structure interop, and SNFG rendering"
+keywords = ["glycan", "glycoinformatics", "wurcs", "cheminformatics", "bioinformatics"]
+categories = ["science"]
+
+# Pin shared third-party dependency versions here so every crate in the
+# workspace uses the same version. Member crates should depend on these
+# via `dep-name = { workspace = true }` rather than restating a version.
+[workspace.dependencies]
+crabwurcs-core = { path = "crabwurcs-core", version = "0.1.0" }
+crabwurcs-iupac = { path = "crabwurcs-iupac", version = "0.1.0" }
+crabwurcs-mol = { path = "crabwurcs-mol", version = "0.1.0" }
+crabwurcs-pdb = { path = "crabwurcs-pdb", version = "0.1.0" }
+crabwurcs-snfg = { path = "crabwurcs-snfg", version = "0.1.0" }
+
+thiserror = "1.0"
+petgraph = "0.6"
+nom = "7"
+# Legacy exact pins retained to avoid an unrelated dependency-graph change
+# during the conversion work. Re-audit and relax these before a 1.0 release.
+indexmap = "=2.11.0"
+hashbrown = "=0.15.5"
+rayon-core = "=1.12.1"
+clap = { version = "=4.5.4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+anyhow = "1"
+
+# Chemistry backend for crabwurcs-mol. Confirmed on crates.io as the
+# right crate name (not `rdkit-rs`, which is a separate, far less mature
+# 0.1.0 crate). Requires a static RDKit build at link time — see
+# crabwurcs-mol/README-BACKEND.md for the ARM64/Ampere build notes.
+rdkit = "0.4"
+
+# Pure-Rust molecular graph, stereochemical SMILES, and MOL/SDF I/O. Pinned
+# while the young crate stabilizes; this removes the default runtime/build
+# dependency on system RDKit without discarding the optional RDKit backend.
+chematic = { version = "=0.4.30", default-features = false, features = ["smiles", "perception", "mol", "chem"] }
+
+# Pure-Rust PDB/mmCIF reader for crabwurcs-pdb.
+pdbtbx = "0.12"
+
+# Kept modest: real workspace-wide lint/profile tuning is left to the agent
+# finishing this out, since it depends on decisions not yet made (MSRV,
+# panics-in-FFI policy for crabwurcs-mol, etc).
+[profile.release]
+lto = "thin"

@@ -1,0 +1,25 @@
+[package]
+name = "crabwurcs-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Command-line interface for crabWURCS (replaces GlycanFormatConverter-cli, and covers MolWURCS/seq2snfg CLI use cases)"
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "crabwurcs"
+path = "src/main.rs"
+
+[dependencies]
+crabwurcs = { path = "../crabwurcs" }
+clap = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+[features]
+default = []
+rdkit-backend = ["crabwurcs/rdkit-backend"]

@@ -1,0 +1,18 @@
+[package]
+name = "crabwurcs-pdb"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Extract glycan structures from PDB/mmCIF protein structure files"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+crabwurcs-core = { workspace = true }
+thiserror = { workspace = true }
+pdbtbx = { workspace = true }
+petgraph = { workspace = true }
+rayon-core = { workspace = true }

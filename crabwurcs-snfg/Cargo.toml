@@ -1,0 +1,16 @@
+[package]
+name = "crabwurcs-snfg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Render a glycan ResidueGraph as an SNFG (Symbol Nomenclature for Glycans) SVG figure"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+crabwurcs-core = { workspace = true }
+thiserror = { workspace = true }
+petgraph = { workspace = true }

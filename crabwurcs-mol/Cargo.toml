@@ -1,0 +1,28 @@
+[package]
+name = "crabwurcs-mol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WURCS <-> MOL/SDF/SMILES chemical structure conversion (MolWURCS equivalent)"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+crabwurcs-core = { workspace = true }
+thiserror = { workspace = true }
+chematic = { workspace = true }
+petgraph = { workspace = true }
+
+# Optional and feature-gated so `cargo check`/`cargo build` across the
+# workspace works out of the box without a system RDKit install. Enable
+# the `rdkit-backend` feature once RDKit (>= 2023.09.1, static libs) is
+# available — see README-BACKEND.md in this crate for build notes,
+# including the ARM64/Ampere path.
+rdkit = { workspace = true, optional = true }
+
+[features]
+default = []
+rdkit-backend = ["dep:rdkit"]

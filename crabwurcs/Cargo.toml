@@ -1,0 +1,24 @@
+[package]
+name = "crabwurcs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "crabWURCS: a pure-Rust toolkit for glycan notation conversion, chemical-structure interop, and SNFG rendering (facade crate)"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+crabwurcs-core = { workspace = true }
+crabwurcs-iupac = { workspace = true }
+crabwurcs-mol = { workspace = true }
+crabwurcs-pdb = { workspace = true }
+crabwurcs-snfg = { workspace = true }
+thiserror = { workspace = true }
+
+[features]
+default = []
+# Forwarded down to crabwurcs-mol; see that crate's README-BACKEND.md.
+rdkit-backend = ["crabwurcs-mol/rdkit-backend"]

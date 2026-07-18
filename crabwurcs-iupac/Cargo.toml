@@ -1,0 +1,18 @@
+[package]
+name = "crabwurcs-iupac"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "IUPAC condensed/extended glycan notation <-> crabwurcs-core ResidueGraph"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+crabwurcs-core = { workspace = true }
+thiserror = { workspace = true }
+nom = { workspace = true }
+petgraph = { workspace = true }
+regex = "1.10"
