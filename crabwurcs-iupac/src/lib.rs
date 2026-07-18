@@ -1591,6 +1591,7 @@ fn lookup_skeleton(base: &str, is_d: bool, is_l: bool) -> Option<(&str, char)> {
 fn extract_name_modifications(name: &str) -> Vec<Modification> {
     let mut mods = Vec::new();
     let name_lower = name.to_lowercase();
+    let base_lower = strip_common_prefixes(name).to_lowercase();
 
     if name_lower.contains("nac") || name_lower.contains("nacetyl") {
         mods.push(Modification {
@@ -1614,8 +1615,8 @@ fn extract_name_modifications(name: &str) -> Vec<Modification> {
         });
     }
 
-    let is_sialic_acid = name_lower.starts_with("neu") || name_lower.starts_with("sia");
-    let is_bacillosamine = name_lower.contains("bac");
+    let is_sialic_acid = base_lower.starts_with("neu") || base_lower.starts_with("sia");
+    let is_bacillosamine = base_lower.contains("bac");
     if is_sialic_acid {
         if name_lower.contains("5ac") || name_lower.contains("nac") {
             mods.push(Modification {
@@ -2012,8 +2013,20 @@ fn residue_to_iupac_name(residue: &Monosaccharide) -> String {
         && bac_n_positions.contains(&2)
         && bac_n_positions.contains(&4);
     let is_kdo = bare == "1122" && residue.anomeric_prefix.starts_with('A');
+    let is_sialic = bare == "21122" && matches!(residue.anomeric_prefix.as_str(), "Aad" | "AUd");
+    let has_ngc = residue
+        .modifications
+        .iter()
+        .any(|modification| modification.descriptor.contains("NCCO"));
+    let has_nac = residue
+        .modifications
+        .iter()
+        .any(|modification| modification.descriptor.contains("NCC"));
 
     let mut name = match bare {
+        "21122" if is_sialic && has_ngc => "Neu5Gc".to_string(),
+        "21122" if is_sialic && has_nac => "Neu5Ac".to_string(),
+        "21122" if is_sialic => "Kdn".to_string(),
         "2122" if is_bac => "Bac".to_string(),
         "1122" if is_kdo => "Kdo".to_string(),
         "2211" if skeleton.ends_with('m') => "Rha".to_string(),
@@ -2022,21 +2035,43 @@ fn residue_to_iupac_name(residue: &Monosaccharide) -> String {
         "2122" => {
             let mut name = String::from("Glc");
             for m in &residue.modifications {
-                if m.descriptor.contains("NCC") || m.descriptor.contains("NC") {
+                if m.descriptor.contains("NSO") {
+                    name.push_str("NS");
+                } else if m.descriptor == "N" {
+                    name.push('N');
+                } else if m.descriptor.contains("NCCO") {
+                    name.push_str("NGc");
+                } else if m.descriptor.contains("NCC") || m.descriptor.contains("NC") {
                     name.push_str("NAc");
                 }
             }
             name
         }
+        "2112" if residue.ring == RingClosure::Furanose => "Galf".to_string(),
         "2112" => {
             let mut name = String::from("Gal");
             for m in &residue.modifications {
-                if m.descriptor.contains("NCC") || m.descriptor.contains("NC") {
+                if m.descriptor.contains("NSO") {
+                    name.push_str("NS");
+                } else if m.descriptor == "N" {
+                    name.push('N');
+                } else if m.descriptor.contains("NCCO") {
+                    name.push_str("NGc");
+                } else if m.descriptor.contains("NCC") || m.descriptor.contains("NC") {
                     name.push_str("NAc");
                 }
             }
             name
         }
+        "2121A" => "IdoA".to_string(),
+        "122" if residue.anomeric_prefix.starts_with('h') => "Fruf".to_string(),
+        "222" if residue.anomeric_prefix.starts_with('h') => "Psif".to_string(),
+        "222" if residue.ring == RingClosure::Furanose => "Ribf".to_string(),
+        "121" if residue.anomeric_prefix.starts_with('h') => "Sorp".to_string(),
+        "112" if residue.anomeric_prefix.starts_with('h') => "Tagp".to_string(),
+        "221" => "Lyxp".to_string(),
+        "211" if residue.ring == RingClosure::Furanose => "Araf".to_string(),
+        "211" => "Ara".to_string(),
         "1221" => "Fuc".to_string(),
         "1122" => "Man".to_string(),
         _ if bare.contains("2122") => {
@@ -2059,8 +2094,10 @@ fn residue_to_iupac_name(residue: &Monosaccharide) -> String {
     };
 
     for modification in &residue.modifications {
-        let already_in_base = modification.descriptor.contains("NC")
-            && (name.contains("NAc") || name.contains("NGc") || name.starts_with("Neu"));
+        let already_in_base = (modification.descriptor.contains("NC")
+            && (name.contains("NAc") || name.contains("NGc") || name.starts_with("Neu")))
+            || (modification.descriptor.contains("NSO") && name.contains("NS"))
+            || (modification.descriptor == "N" && name.ends_with('N'));
         if already_in_base {
             continue;
         }
@@ -2885,6 +2922,26 @@ mod tests {
         let accession = parse_iupac_condensed("G60371D-N").unwrap();
         assert_eq!(accession.node_count(), 23);
         assert_eq!(accession.edge_count(), 22);
+    }
+
+    #[test]
+    fn uncommon_furanoses_and_ketoses_keep_their_iupac_names() {
+        for name in ["Psif", "Ribf", "Sorp", "Tagp", "Lyxp", "Galf"] {
+            let graph = parse_iupac_condensed(name).unwrap();
+            assert_eq!(write_iupac_condensed(&graph).unwrap(), name);
+        }
+    }
+
+    #[test]
+    fn stereoprefixed_neu5gc_keeps_its_n_glycolyl_substituent() {
+        for graph in [
+            parse_iupac_extended("α-D-Neup5Gc-(2→3)-D-Galp").unwrap(),
+            parse_glycam("DNeup5Gca2-3DGalp").unwrap(),
+        ] {
+            let wurcs = crabwurcs_core::write_wurcs(&graph).unwrap();
+            assert!(wurcs.contains("5*NCCO/3=O"), "{wurcs}");
+            assert_eq!(write_iupac_condensed(&graph).unwrap(), "Neu5Gc(a2-3)Gal");
+        }
     }
 
     #[test]

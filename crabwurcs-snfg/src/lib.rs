@@ -45,8 +45,8 @@ pub mod colour {
     pub const GAL: &str = "#FCC326"; // golden yellow – Gal, GalNAc
     pub const MAN: &str = "#058F60"; // dark green – Man, ManNAc
     pub const FUC: &str = "#C23537"; // dark red – Fuc
-    pub const NEU5AC: &str = "#7B2D8E"; // dark purple – Neu5Ac
-    pub const NEU5GC: &str = "#5CB8B2"; // teal – Neu5Gc
+    pub const NEU5AC: &str = "#A15989"; // GlycoShape mauve – Neu5Ac
+    pub const NEU5GC: &str = "#91D3E3"; // GlycoShape light blue – Neu5Gc
     pub const KDN: &str = "#5995B3"; // slate blue – KDN
     pub const IDOA: &str = "#9F6D55"; // tan/brown – IdoA
     pub const KDO: &str = "#FCC326"; // yellow – KDO
@@ -133,6 +133,18 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
         .any(|m| m.descriptor.contains("NCCO") || m.descriptor.contains("NCO"));
     let has_deoxy = residue.skeleton_code.ends_with('m') || skel.contains('d');
     let has_acid = skel.contains('A');
+
+    // Ketohexoses have only three stereogenic backbone digits, so they must
+    // be classified before the aldopentose fallback below.  In particular,
+    // fructofuranose is the green SNFG pentagon used by GlycoShape and
+    // glycowork (the ring form is chemically meaningful, not decoration).
+    if residue.anomeric_prefix.starts_with('h') && bare_str == "122" {
+        return Ok(Symbol {
+            shape: Shape::Pentagon,
+            fill: colour::MAN,
+            label: "Fru",
+        });
+    }
 
     // WURCS encodes ulosonic-acid oxidation in the leading `A*` carbon
     // descriptors rather than in the trailing skeleton string. KDO and Bac
@@ -601,6 +613,8 @@ fn compute_layout(graph: &ResidueGraph, root: NodeIndex) -> HashMap<usize, Layou
         }
     }
 
+    resolve_fucose_collisions(graph, &mut info);
+
     // centre around y=0
     let min_y = info.values().map(|li| li.y).fold(f64::MAX, f64::min);
     let max_y = info.values().map(|li| li.y).fold(f64::MIN, f64::max);
@@ -609,6 +623,44 @@ fn compute_layout(graph: &ResidueGraph, root: NodeIndex) -> HashMap<usize, Layou
         li.y += shift;
     }
     info
+}
+
+fn resolve_fucose_collisions(graph: &ResidueGraph, info: &mut HashMap<usize, LayoutInfo>) {
+    let mut branches = graph
+        .inner()
+        .edge_references()
+        .filter(|edge| is_fucose(graph, edge.target()) && is_terminal(graph, edge.target()))
+        .map(|edge| (edge.source(), edge.target()))
+        .collect::<Vec<_>>();
+    branches.sort_by(|(left_parent, _), (right_parent, _)| {
+        info[&left_parent.index()]
+            .y
+            .total_cmp(&info[&right_parent.index()].y)
+    });
+
+    for (parent, fucose) in branches {
+        let parent_layout = info[&parent.index()].clone();
+        let desired_y = parent_layout.y + V_SPACING;
+        let collision = info.iter().any(|(index, layout)| {
+            *index != fucose.index()
+                && (layout.x - parent_layout.x).abs() < f64::EPSILON
+                && (layout.y - desired_y).abs() < f64::EPSILON
+        });
+        if collision {
+            for (index, layout) in info.iter_mut() {
+                if *index != fucose.index() && layout.y >= desired_y {
+                    layout.y += V_SPACING;
+                }
+            }
+        }
+        info.insert(
+            fucose.index(),
+            LayoutInfo {
+                x: parent_layout.x,
+                y: desired_y,
+            },
+        );
+    }
 }
 
 fn layout_subtree(
@@ -640,41 +692,54 @@ fn layout_subtree(
         *next_leaf += 1;
         y
     } else {
-        let mut child_y = Vec::with_capacity(children.len());
-        for (child, _) in children {
-            let is_fucose = graph
-                .residue(child)
-                .and_then(|residue| symbol_for(residue).ok())
-                .is_some_and(|symbol| symbol.shape == Shape::Triangle);
-            let y = layout_subtree(
-                graph,
-                child,
-                if is_fucose { depth } else { depth + 1 },
-                next_leaf,
-                info,
-                visited,
-            );
-            child_y.push((child, y));
-        }
-        let non_fucose = child_y
-            .iter()
-            .filter(|(child, _)| {
-                graph
-                    .residue(*child)
-                    .and_then(|residue| symbol_for(residue).ok())
-                    .is_none_or(|symbol| symbol.shape != Shape::Triangle)
-            })
-            .map(|(_, y)| *y)
-            .collect::<Vec<_>>();
-        let centred = if non_fucose.is_empty() {
-            child_y.iter().map(|(_, y)| *y).collect::<Vec<_>>()
+        let (fucose_children, ordinary_children): (Vec<_>, Vec<_>) = children
+            .into_iter()
+            .partition(|(child, _)| is_fucose(graph, *child) && is_terminal(graph, *child));
+
+        let y = if ordinary_children.is_empty() {
+            let y = *next_leaf as f64 * V_SPACING;
+            *next_leaf += 1;
+            y
         } else {
-            non_fucose
+            let child_y = ordinary_children
+                .into_iter()
+                .map(|(child, _)| layout_subtree(graph, child, depth + 1, next_leaf, info, visited))
+                .collect::<Vec<_>>();
+            (child_y[0] + child_y[child_y.len() - 1]) / 2.0
         };
-        (centred[0] + centred[centred.len() - 1]) / 2.0
+
+        // SNFG convention draws terminal fucose vertically below its parent.
+        // It remains at the parent's horizontal depth but must never share the
+        // parent's coordinates (the old behaviour overprinted the triangle on
+        // Gal/GlcNAc in examples such as GS00742 and GS00169).
+        for (index, (child, _)) in fucose_children.into_iter().enumerate() {
+            visited.insert(child.index());
+            info.insert(
+                child.index(),
+                LayoutInfo {
+                    x: depth as f64,
+                    y: y + (index + 1) as f64 * V_SPACING,
+                },
+            );
+        }
+        y
     };
     info.insert(node.index(), LayoutInfo { x: depth as f64, y });
     y
+}
+
+fn is_fucose(graph: &ResidueGraph, node: NodeIndex) -> bool {
+    graph
+        .residue(node)
+        .and_then(|residue| symbol_for(residue).ok())
+        .is_some_and(|symbol| symbol.shape == Shape::Triangle)
+}
+
+fn is_terminal(graph: &ResidueGraph, node: NodeIndex) -> bool {
+    graph
+        .inner()
+        .edges_directed(node, Direction::Outgoing)
+        .all(|edge| edge.weight().repeat.is_some() || edge.weight().cyclic)
 }
 
 // ── Linkage label ──────────────────────────────────────────────────────────
@@ -796,14 +861,12 @@ pub fn render_svg_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> Sn
     let mut svg = format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SNFG glycan diagram" viewBox="0 0 {w} {h}" width="{w}" height="{h}">
 <style>
-  .bg {{ fill: #fff; }}
   .bond {{ stroke: #000; stroke-width: {bw}; fill: none; stroke-linecap: round; }}
   .uncertain {{ stroke: #555; stroke-width: {ubw}; fill: none; stroke-linecap: round; stroke-dasharray: 8 7; }}
   .link {{ font-family: {ff}; font-size: {ls}px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
   .node {{ fill: none; }}
   .res-label {{ font-family: {ff}; font-size: 11px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
 </style>
-<rect class="bg" width="100%" height="100%"/>
 "#,
         w = canvas_w,
         h = canvas_h,
@@ -955,11 +1018,9 @@ fn render_composition_svg(graph: &ResidueGraph, opts: &RenderOptions) -> SnfgRes
     let mut svg = format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SNFG glycan composition" viewBox="0 0 {width} {height}" width="{width}" height="{height}">
 <style>
-  .bg {{ fill: #fff; }}
   .res-label {{ font-family: {font}; font-size: 11px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
   .count {{ font-family: {font}; font-size: {count_size}px; font-weight: 600; fill: #000; text-anchor: middle; }}
 </style>
-<rect class="bg" width="100%" height="100%"/>
 "#,
         font = opts.font_family,
         count_size = 18.0 * scale,
@@ -1017,16 +1078,23 @@ fn draw_linkage_text(
     } else {
         (0.0, -14.0 * scale)
     };
+    let mut angle = dy.atan2(dx).to_degrees();
+    if angle > 90.0 {
+        angle -= 180.0;
+    } else if angle < -90.0 {
+        angle += 180.0;
+    }
     svg.push_str(&format!(
-        r#"<text x="{mx}" y="{my}" class="link" transform="translate({ox},{oy})">{label}</text>
+        r#"<text x="0" y="0" class="link" transform="translate({x},{y}) rotate({angle})">{label}</text>
 "#,
+        x = mx + ox,
+        y = my + oy,
     ));
 }
 
 fn empty_svg() -> String {
     concat!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40" width="120" height="40">
-  <rect class="bg" width="100%" height="100%"/>
   <text x="10" y="25" font-family="sans-serif" font-size="11" fill=""#,
         "#999",
         r#"">(empty)</text>
@@ -1371,6 +1439,22 @@ mod tests {
     }
 
     #[test]
+    fn glycoshape_sialic_acid_palette_and_fruf_symbol_are_exact() {
+        let neu5gc = parse("WURCS=2.0/1,1,0/[AUd21122h_5*NCCO/3=O]/1/");
+        let neu5gc = symbol_for(neu5gc.residue(neu5gc.root().unwrap()).unwrap()).unwrap();
+        assert_eq!(neu5gc.shape, Shape::Diamond);
+        assert_eq!(neu5gc.fill, "#91D3E3");
+
+        let fructan = parse("WURCS=2.0/2,3,2/[hU122h][ha122h-2b_2-5]/1-2-2/a1-b2_b1-c2");
+        for residue in fructan.inner().node_weights() {
+            let symbol = symbol_for(residue).unwrap();
+            assert_eq!(symbol.shape, Shape::Pentagon);
+            assert_eq!(symbol.fill, colour::MAN);
+            assert_eq!(symbol.label, "Fru");
+        }
+    }
+
+    #[test]
     fn test_render_linear() {
         let g = parse("WURCS=2.0/2,2,1/[u2112h][a2112h-1b_1-5]/1-2/a3-b1");
         let svg = render_svg(&g).unwrap();
@@ -1410,6 +1494,8 @@ mod tests {
         assert!(svg.contains("<svg"));
         let bond_count = svg.matches("class=\"bond\"").count();
         assert_eq!(bond_count, 2);
+        assert!(!svg.contains("<rect class=\"bg\""));
+        assert!(svg.contains("rotate("));
     }
 
     #[test]
@@ -1475,6 +1561,24 @@ mod tests {
             layout[&fucose_parent.index()].x,
             "core fucose must be vertical at its parent's depth"
         );
+        assert_ne!(
+            layout[&fucose.index()].y,
+            layout[&fucose_parent.index()].y,
+            "core fucose must not overprint its parent"
+        );
+    }
+
+    #[test]
+    fn terminal_fucose_reserves_a_lane_instead_of_covering_another_residue() {
+        let g = parse(
+            "WURCS=2.0/4,4,3/[u2112h_2*NCC/3=O][a2112h-1b_1-5][a2122h-1b_1-5_2*NCC/3=O][a1221m-1a_1-5]/1-2-3-4/a3-b1_a6-c1_c3-d1",
+        );
+        let layout = compute_layout(&g, g.root().unwrap());
+        let coordinates = layout
+            .values()
+            .map(|position| (position.x as i32, position.y.round() as i32))
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(coordinates.len(), g.node_count());
     }
 
     #[test]

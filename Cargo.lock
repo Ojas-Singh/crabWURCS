@@ -369,9 +369,12 @@ name = "crabwurcs-pdb"
 version = "0.1.0"
 dependencies = [
  "crabwurcs-core",
+ "crabwurcs-iupac",
  "pdbtbx",
  "petgraph",
  "rayon-core",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 

@@ -76,11 +76,24 @@ The notation and drawing pipeline is working end to end:
   exporters currently return an explicit error where no faithful IUPAC
   representation has been implemented.
 - SNFG SVG rendering accepts any of those inputs and uses a collision-free
-  tidy-tree layout, SNFG shapes/colors, linkage labels, and accessible SVG.
+  tidy-tree layout, SNFG shapes/colors, bond-aligned linkage labels,
+  transparent backgrounds, and accessible SVG. Terminal fucose branches
+  reserve their own lanes instead of covering core residues; fructofuranose
+  and the Neu5Ac/Neu5Gc palette follow the GlycoShape/SNFG presentation.
   Undefined antennae use dashed candidate bonds; compositions use compact
   counted symbols rather than dropping disconnected residues. All 938
   molecular-corpus records render without an unknown-symbol fallback; rare
   Alt, Gul, All, Tal, and Ido epimers use their standard SNFG families.
+- PDB and GLYCAM-PDB extraction reconstructs the real glycosidic graph from
+  `CONECT`/covalent records or anomeric-carbon/acceptor-oxygen geometry, including
+  branch positions, furanoses, uronic acids, amino sugars, sialic acids, and
+  O/N-sulfation, methylation, acetylation, and phosphocholine. A live audit of
+  all 1,886 GlycoShape PDB/GLYCAM files finds 1,863 exact rooted semantic
+  matches. Another 21 retain the same residue/link counts but faithfully expose
+  anomer, linkage-position, or sulfate differences encoded by the coordinate
+  files versus `GLYCOSHAPE.json`; both GS00954 files contain only six of the
+  seven JSON residues. Residue order is never treated as a synthetic linear
+  chain or used to invent the absent residue.
 
 Broader MAP chemistry beyond the represented substituent families, polymeric
 or ambiguous WURCS constructs that do not denote one finite molecule, and
@@ -100,6 +113,10 @@ cargo run -p crabwurcs-cli -- convert --to glycam \
 
 cargo run -p crabwurcs-cli -- render --output glycan.svg \
   'Gal(b1-4)GlcNAc'
+
+# Extract actual topology from a downloaded PDB or GLYCAM coordinate file.
+cargo run -p crabwurcs-cli -- pdb-to-wurcs --to iupac-condensed glycan.pdb
+cargo run -p crabwurcs-cli -- pdb-to-wurcs --to wurcs glycan.pdb
 
 # Composition and uncertain/cyclic structures are accepted too.
 cargo run -p crabwurcs-cli -- convert --to wurcs \
@@ -161,7 +178,8 @@ syntax. The full workspace is currently developed and tested on Rust 1.97.
    templates, and complex nested/partial repeat semantics.
 3. Extend the SNFG residue dictionary and canonical branch ordering against
    the complete SNFG and GlycanFormatConverter fixtures.
-4. Implement robust PDB/mmCIF linkage reconstruction.
+4. Expand the structure-coordinate audit beyond the current deterministic
+   GlycoShape sample and add explicit mmCIF fixtures for uncommon residues.
 
 ## License
 

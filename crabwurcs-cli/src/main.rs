@@ -103,9 +103,14 @@ enum Command {
         input: Option<PathBuf>,
     },
 
-    /// Extract glycan structure(s) from a PDB or mmCIF file, emitted as
-    /// WURCS (one line per glycan found).
-    PdbToWurcs { input: PathBuf },
+    /// Extract glycan structure(s) from a PDB or mmCIF file (one line per
+    /// glycan found). WURCS is the default; IUPAC and GLYCAM are available
+    /// through `--to`.
+    PdbToWurcs {
+        input: PathBuf,
+        #[arg(long, value_enum, default_value = "wurcs")]
+        to: TextFormat,
+    },
 
     /// Render a glycan as an SNFG SVG figure. Equivalent to seq2snfg.
     Render {
@@ -133,7 +138,7 @@ fn main() -> ExitCode {
         } => run_convert(from, to, input, input_file),
         Command::MolToWurcs { format, input } => run_mol_to_wurcs(format, input),
         Command::WurcsToMol { format, input } => run_wurcs_to_mol(format, input),
-        Command::PdbToWurcs { input } => run_pdb_to_wurcs(input),
+        Command::PdbToWurcs { input, to } => run_pdb_convert(input, to),
         Command::Render {
             input,
             input_file,
@@ -222,13 +227,16 @@ fn run_wurcs_to_mol(format: ChemFormatArg, input: Option<PathBuf>) -> anyhow::Re
     Ok(())
 }
 
-fn run_pdb_to_wurcs(input: PathBuf) -> anyhow::Result<()> {
+fn run_pdb_convert(input: PathBuf, to: TextFormat) -> anyhow::Result<()> {
+    if matches!(to, TextFormat::Auto) {
+        anyhow::bail!("--to auto is not valid for PDB output");
+    }
     let glycans = crabwurcs::pdb::extract_glycans_from_file(&input)?;
     for glycan in glycans {
-        let wurcs = crabwurcs::core::write_wurcs(&glycan.graph)?;
+        let notation = crabwurcs::write_notation(&glycan.graph, to.into())?;
         match glycan.attachment_site {
-            Some(site) => println!("{site}\t{wurcs}"),
-            None => println!("{wurcs}"),
+            Some(site) => println!("{site}\t{notation}"),
+            None => println!("{notation}"),
         }
     }
     Ok(())

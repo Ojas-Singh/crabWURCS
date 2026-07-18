@@ -1,64 +1,65 @@
 #!/usr/bin/env python3
 """
-Regenerate all GlycoShape SNFG SVG files from WURCS data in GLYCOSHAPE.json
+Regenerate GlycoShape SNFG SVGs from all 4 notation formats.
+Output: <id>_wurcs.svg, <id>_iupac.svg, <id>_iupac_ext.svg, <id>_glycam.svg
 """
 
 import json
 import subprocess
 import sys
 from pathlib import Path
+from collections import Counter
+
+CRAB = './target/debug/crabwurcs'
+
+CONFIG = [
+    ('wurcs',     'wurcs',          'wurcs'),
+    ('iupac',     'iupac',          'iupac-condensed'),
+    ('iupac_ext', 'iupac_extended', 'iupac-extended'),
+    ('glycam',    'glycam',         'glycam'),
+]
 
 def main():
-    # Read GLYCOSHAPE.json
-    glycoshape_path = Path("GLYCOSHAPE.json")
-    if not glycoshape_path.exists():
-        print(f"Error: {glycoshape_path} not found")
-        sys.exit(1)
-
-    with open(glycoshape_path, 'r') as f:
+    json_path = Path("GLYCOSHAPE.json")
+    with open(json_path) as f:
         data = json.load(f)
 
-    print(f"Loaded {len(data)} entries from GLYCOSHAPE.json")
+    out_dir = Path("glycoshape")
+    out_dir.mkdir(exist_ok=True)
 
-    success_count = 0
-    failure_count = 0
-    skipped_count = 0
+    counts = Counter()
 
-    for key, entry in data.items():
+    for key, entry in sorted(data.items()):
         archetype = entry.get('archetype', {})
-        wurcs = archetype.get('wurcs')
 
-        if not wurcs:
-            skipped_count += 1
+        for suffix, src_field, render_fmt in CONFIG:
+            inp = archetype.get(src_field)
+            if not inp:
+                counts[f'{suffix}_no_field'] += 1
+                continue
+
+            res = subprocess.run(
+                [CRAB, 'render', '--from', render_fmt],
+                input=inp, capture_output=True, text=True
+            )
+            if res.returncode == 0:
+                (out_dir / f"{key}_{suffix}.svg").write_text(res.stdout)
+                counts[f'{suffix}_ok'] += 1
+            else:
+                counts[f'{suffix}_fail'] += 1
+
+        if sum(1 for s, _, _ in CONFIG for c in ['_ok', '_no_field'] if counts[s+c]) == 0:
             continue
+        total_done = sum(counts[f'{s}_ok'] + counts[f'{s}_no_field'] for s, _, _ in CONFIG)
+        if total_done % 400 == 0:
+            print(f"Progress: {key}")
 
-        # Use crabwurcs CLI to render SNFG
-        result = subprocess.run(
-            ['./target/debug/crabwurcs', 'render', '--from', 'wurcs', '--input-file', 'false', wurcs],
-            capture_output=True,
-            text=True
-        )
-
-        if result.returncode == 0:
-            svg_filename = Path(f"{key}.snfg.svg")
-            try:
-                with open(svg_filename, 'w') as f:
-                    f.write(result.stdout)
-                success_count += 1
-                if success_count % 100 == 0:
-                    print(f"Generated {success_count} SVG files so far...")
-            except Exception as e:
-                print(f"Error writing {svg_filename}: {e}")
-                failure_count += 1
-        else:
-            print(f"Error rendering {key}: {result.stderr}")
-            failure_count += 1
-
-    print(f"\n--- Summary ---")
-    print(f"Total entries: {len(data)}")
-    print(f"Successfully generated: {success_count} SVG files")
-    print(f"Failed: {failure_count}")
-    print(f"Skipped (no WURCS): {skipped_count}")
+    print(f"\n--- {len(data)} entries ---")
+    for suffix, _, _ in CONFIG:
+        ok = counts[f'{suffix}_ok']
+        skip = counts[f'{suffix}_no_field']
+        fail = counts[f'{suffix}_fail']
+        print(f"  {suffix}: {ok} ok, {skip} no-field, {fail} fail")
 
 if __name__ == '__main__':
     main()
