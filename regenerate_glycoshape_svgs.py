@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from collections import Counter
 
-CRAB = './target/debug/crabwurcs'
+CRAB = './target/release/crabwurcs'
 
 CONFIG = [
     ('wurcs',     'wurcs',          'wurcs'),

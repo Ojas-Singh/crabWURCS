@@ -630,17 +630,25 @@ fn resolve_fucose_collisions(graph: &ResidueGraph, info: &mut HashMap<usize, Lay
         .inner()
         .edge_references()
         .filter(|edge| is_fucose(graph, edge.target()) && is_terminal(graph, edge.target()))
-        .map(|edge| (edge.source(), edge.target()))
+        .map(|edge| (edge.source(), edge.target(), edge.weight().parent_position.0))
         .collect::<Vec<_>>();
-    branches.sort_by(|(left_parent, _), (right_parent, _)| {
+    branches.sort_by(|(left_parent, _, _), (right_parent, _, _)| {
         info[&left_parent.index()]
             .y
             .total_cmp(&info[&right_parent.index()].y)
     });
 
-    for (parent, fucose) in branches {
+    for (parent, fucose, linkage_pos) in branches {
         let parent_layout = info[&parent.index()].clone();
-        let desired_y = parent_layout.y + V_SPACING;
+        // Use the same positioning logic as layout_subtree for consistency
+        let desired_y = parent_layout.y + if linkage_pos == 6 {
+            -V_SPACING  // α6 fucose goes UP
+        } else if linkage_pos == 3 {
+            V_SPACING   // α3 fucose goes DOWN
+        } else {
+            V_SPACING   // other positions default to DOWN
+        };
+
         let collision = info.iter().any(|(index, layout)| {
             *index != fucose.index()
                 && (layout.x - parent_layout.x).abs() < f64::EPSILON
@@ -708,17 +716,24 @@ fn layout_subtree(
             (child_y[0] + child_y[child_y.len() - 1]) / 2.0
         };
 
-        // SNFG convention draws terminal fucose vertically below its parent.
-        // It remains at the parent's horizontal depth but must never share the
-        // parent's coordinates (the old behaviour overprinted the triangle on
-        // Gal/GlcNAc in examples such as GS00742 and GS00169).
-        for (index, (child, _)) in fucose_children.into_iter().enumerate() {
+        // SNFG convention draws terminal fucose vertically aligned with parent.
+        // To prevent overlap of α3 and α6 fucose (e.g., in GS00698-like examples),
+        // position them in opposite vertical directions.
+        // α6 goes UP (negative offset), α3 goes DOWN (positive offset)
+        for (child, linkage_pos) in fucose_children.into_iter() {
             visited.insert(child.index());
+            let vertical_offset = if linkage_pos == 6 {
+                -V_SPACING  // α6 fucose goes UP
+            } else if linkage_pos == 3 {
+                V_SPACING   // α3 fucose goes DOWN
+            } else {
+                V_SPACING   // other positions default to DOWN
+            };
             info.insert(
                 child.index(),
                 LayoutInfo {
                     x: depth as f64,
-                    y: y + (index + 1) as f64 * V_SPACING,
+                    y: y + vertical_offset,
                 },
             );
         }
