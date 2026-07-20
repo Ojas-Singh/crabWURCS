@@ -45,6 +45,7 @@ pub mod colour {
     pub const GAL: &str = "#FCC326"; // golden yellow – Gal, GalNAc
     pub const MAN: &str = "#058F60"; // dark green – Man, ManNAc
     pub const FUC: &str = "#C23537"; // dark red – Fuc
+    pub const RHA: &str = "#058F60"; // dark green – Rha (GlycoShape uses same color as Man)
     pub const NEU5AC: &str = "#A15989"; // GlycoShape mauve – Neu5Ac
     pub const NEU5GC: &str = "#91D3E3"; // GlycoShape light blue – Neu5Gc
     pub const KDN: &str = "#5995B3"; // slate blue – KDN
@@ -422,7 +423,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
         "2211" if has_deoxy => {
             return Ok(Symbol {
                 shape: Shape::Triangle,
-                fill: colour::FUC,
+                fill: colour::RHA,
                 label: "Rha",
             });
         }
@@ -519,12 +520,57 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
     }
 
     // ── Pentoses ───────────────────────────────────────────────────────
-    if bare_str.len() == 3 {
-        return Ok(Symbol {
-            shape: Shape::Star,
-            fill: colour::XYL,
-            label: "Xyl",
-        });
+    // Handle specific pentose types before generic fallback
+    match bare_str {
+        "211" | "122" => {
+            // Ara (arabinose) - use green for furanose forms
+            return Ok(Symbol {
+                shape: Shape::Star,
+                fill: colour::MAN, // green - same as other furanoses
+                label: "Ara",
+            });
+        }
+        "212" => {
+            // Xyl (xylose)
+            return Ok(Symbol {
+                shape: Shape::Star,
+                fill: colour::MAN, // green - matches reference
+                label: "Xyl",
+            });
+        }
+        "222" | "112" => {
+            // Rib (ribose) or Lyx (lyxose)
+            return Ok(Symbol {
+                shape: Shape::Star,
+                fill: colour::MAN, // green - matches reference
+                label: if bare_str == "222" { "Rib" } else { "Lyx" },
+            });
+        }
+        "221" => {
+            // Lyx (lyxose) - alternative form
+            return Ok(Symbol {
+                shape: Shape::Star,
+                fill: colour::MAN, // green - matches reference
+                label: "Lyx",
+            });
+        }
+        "121" => {
+            // Other pentose (Sor, etc.)
+            return Ok(Symbol {
+                shape: Shape::Star,
+                fill: colour::MAN, // green - matches reference
+                label: "?",
+            });
+        }
+        _ if bare_str.len() == 3 => {
+            // Generic pentose fallback
+            return Ok(Symbol {
+                shape: Shape::Star,
+                fill: colour::MAN, // green - matches reference
+                label: "Xyl",
+            });
+        }
+        _ => {}
     }
 
     // Composition WURCS commonly uses `xxxx` when stereochemistry is not
@@ -613,7 +659,7 @@ fn compute_layout(graph: &ResidueGraph, root: NodeIndex) -> HashMap<usize, Layou
         }
     }
 
-    resolve_fucose_collisions(graph, &mut info);
+    resolve_triangle_collisions(graph, &mut info);
 
     // centre around y=0
     let min_y = info.values().map(|li| li.y).fold(f64::MAX, f64::min);
@@ -625,7 +671,7 @@ fn compute_layout(graph: &ResidueGraph, root: NodeIndex) -> HashMap<usize, Layou
     info
 }
 
-fn resolve_fucose_collisions(graph: &ResidueGraph, info: &mut HashMap<usize, LayoutInfo>) {
+fn resolve_triangle_collisions(graph: &ResidueGraph, info: &mut HashMap<usize, LayoutInfo>) {
     let mut branches = graph
         .inner()
         .edge_references()
@@ -641,7 +687,7 @@ fn resolve_fucose_collisions(graph: &ResidueGraph, info: &mut HashMap<usize, Lay
     for (parent, fucose, linkage_pos) in branches {
         let parent_layout = info[&parent.index()].clone();
 
-        // Check if this parent has both α3 and α6 Fuc children
+        // Check if this parent has both α3 and α6 triangle children (Fuc) or α2 and α4 triangle children (Rha)
         let parent_fucose_children: Vec<u8> = graph
             .inner()
             .edges_directed(parent, Direction::Outgoing)
@@ -651,6 +697,8 @@ fn resolve_fucose_collisions(graph: &ResidueGraph, info: &mut HashMap<usize, Lay
 
         let has_both_alpha3_and_alpha6 = parent_fucose_children.iter().any(|&pos| pos == 3)
             && parent_fucose_children.iter().any(|&pos| pos == 6);
+        let has_both_alpha2_and_alpha4 = parent_fucose_children.iter().any(|&pos| pos == 2)
+            && parent_fucose_children.iter().any(|&pos| pos == 4);
 
         // Check if this is core fucose - attached to the root GlcNAc (reducing end)
         let is_core_fucose = linkage_pos == 6 && graph
@@ -671,10 +719,18 @@ fn resolve_fucose_collisions(graph: &ResidueGraph, info: &mut HashMap<usize, Lay
             } else {
                 V_SPACING   // other positions default to DOWN
             }
+        } else if has_both_alpha2_and_alpha4 {
+            parent_layout.y + if linkage_pos == 4 {
+                -V_SPACING  // α4 rhamnose goes UP when paired with α2
+            } else if linkage_pos == 2 {
+                V_SPACING   // α2 rhamnose goes DOWN when paired with α4
+            } else {
+                V_SPACING   // other positions default to DOWN
+            }
         } else if is_core_fucose {
             parent_layout.y + -V_SPACING  // Core α6 fucose defaults to UP
         } else {
-            parent_layout.y + V_SPACING  // Single fucose defaults to DOWN
+            parent_layout.y + V_SPACING  // Single triangle defaults to DOWN
         };
 
         let collision = info.iter().any(|(index, layout)| {
@@ -744,13 +800,15 @@ fn layout_subtree(
             (child_y[0] + child_y[child_y.len() - 1]) / 2.0
         };
 
-        // SNFG convention draws terminal fucose vertically aligned with parent.
-        // To prevent overlap of α3 and α6 fucose (e.g., in GS00698-like examples),
-        // position them in opposite vertical directions ONLY when both are present
-        // on the same parent residue. Otherwise, use standard positioning.
+        // SNFG convention draws terminal fucose/rhamnose vertically aligned with parent.
+        // To prevent overlap when multiple triangles are attached to the same parent,
+        // position them in opposite vertical directions when both are present.
         let has_both_alpha3_and_alpha6 = fucose_children.iter()
             .any(|(_, pos)| *pos == 3) && fucose_children.iter()
             .any(|(_, pos)| *pos == 6);
+        let has_both_alpha2_and_alpha4 = fucose_children.iter()
+            .any(|(_, pos)| *pos == 2) && fucose_children.iter()
+            .any(|(_, pos)| *pos == 4);
 
         for (child, linkage_pos) in fucose_children.into_iter() {
             visited.insert(child.index());
@@ -772,10 +830,18 @@ fn layout_subtree(
                 } else {
                     V_SPACING   // other positions default to DOWN
                 }
+            } else if has_both_alpha2_and_alpha4 {
+                if linkage_pos == 4 {
+                    -V_SPACING  // α4 rhamnose goes UP when paired with α2
+                } else if linkage_pos == 2 {
+                    V_SPACING   // α2 rhamnose goes DOWN when paired with α4
+                } else {
+                    V_SPACING   // other positions default to DOWN
+                }
             } else if is_core_fucose {
                 -V_SPACING  // Core α6 fucose defaults to UP
             } else {
-                V_SPACING   // Single fucose defaults to DOWN
+                V_SPACING   // Single triangle defaults to DOWN
             };
             info.insert(
                 child.index(),
