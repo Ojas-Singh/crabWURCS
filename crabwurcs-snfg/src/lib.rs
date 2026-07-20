@@ -640,13 +640,41 @@ fn resolve_fucose_collisions(graph: &ResidueGraph, info: &mut HashMap<usize, Lay
 
     for (parent, fucose, linkage_pos) in branches {
         let parent_layout = info[&parent.index()].clone();
+
+        // Check if this parent has both α3 and α6 Fuc children
+        let parent_fucose_children: Vec<u8> = graph
+            .inner()
+            .edges_directed(parent, Direction::Outgoing)
+            .filter(|edge| is_fucose(graph, edge.target()) && is_terminal(graph, edge.target()))
+            .map(|edge| edge.weight().parent_position.0)
+            .collect();
+
+        let has_both_alpha3_and_alpha6 = parent_fucose_children.iter().any(|&pos| pos == 3)
+            && parent_fucose_children.iter().any(|&pos| pos == 6);
+
+        // Check if this is core fucose - attached to the root GlcNAc (reducing end)
+        let is_core_fucose = linkage_pos == 6 && graph
+            .residue(parent)
+            .is_some_and(|res| {
+                let skel = &res.skeleton_code;
+                let bare: String = skel.chars().take_while(|c| c.is_ascii_digit()).collect();
+                // Check if this is a GlcNAc (2122 with N-acetyl) AND is the root node
+                bare == "2122" && res.modifications.iter().any(|m| m.descriptor.contains("NCC")) && parent == graph.root().unwrap()
+            });
+
         // Use the same positioning logic as layout_subtree for consistency
-        let desired_y = parent_layout.y + if linkage_pos == 6 {
-            -V_SPACING  // α6 fucose goes UP
-        } else if linkage_pos == 3 {
-            V_SPACING   // α3 fucose goes DOWN
+        let desired_y = if has_both_alpha3_and_alpha6 {
+            parent_layout.y + if linkage_pos == 6 {
+                -V_SPACING  // α6 fucose goes UP when paired with α3
+            } else if linkage_pos == 3 {
+                V_SPACING   // α3 fucose goes DOWN when paired with α6
+            } else {
+                V_SPACING   // other positions default to DOWN
+            }
+        } else if is_core_fucose {
+            parent_layout.y + -V_SPACING  // Core α6 fucose defaults to UP
         } else {
-            V_SPACING   // other positions default to DOWN
+            parent_layout.y + V_SPACING  // Single fucose defaults to DOWN
         };
 
         let collision = info.iter().any(|(index, layout)| {
@@ -718,16 +746,36 @@ fn layout_subtree(
 
         // SNFG convention draws terminal fucose vertically aligned with parent.
         // To prevent overlap of α3 and α6 fucose (e.g., in GS00698-like examples),
-        // position them in opposite vertical directions.
-        // α6 goes UP (negative offset), α3 goes DOWN (positive offset)
+        // position them in opposite vertical directions ONLY when both are present
+        // on the same parent residue. Otherwise, use standard positioning.
+        let has_both_alpha3_and_alpha6 = fucose_children.iter()
+            .any(|(_, pos)| *pos == 3) && fucose_children.iter()
+            .any(|(_, pos)| *pos == 6);
+
         for (child, linkage_pos) in fucose_children.into_iter() {
             visited.insert(child.index());
-            let vertical_offset = if linkage_pos == 6 {
-                -V_SPACING  // α6 fucose goes UP
-            } else if linkage_pos == 3 {
-                V_SPACING   // α3 fucose goes DOWN
+            // Check if this is core fucose - attached to the root GlcNAc (reducing end)
+            let is_core_fucose = linkage_pos == 6 && graph
+                .residue(node)
+                .is_some_and(|res| {
+                    let skel = &res.skeleton_code;
+                    let bare: String = skel.chars().take_while(|c| c.is_ascii_digit()).collect();
+                    // Check if this is a GlcNAc (2122 with N-acetyl) AND is the root node
+                    bare == "2122" && res.modifications.iter().any(|m| m.descriptor.contains("NCC")) && node == graph.root().unwrap()
+                });
+
+            let vertical_offset = if has_both_alpha3_and_alpha6 {
+                if linkage_pos == 6 {
+                    -V_SPACING  // α6 fucose goes UP when paired with α3
+                } else if linkage_pos == 3 {
+                    V_SPACING   // α3 fucose goes DOWN when paired with α6
+                } else {
+                    V_SPACING   // other positions default to DOWN
+                }
+            } else if is_core_fucose {
+                -V_SPACING  // Core α6 fucose defaults to UP
             } else {
-                V_SPACING   // other positions default to DOWN
+                V_SPACING   // Single fucose defaults to DOWN
             };
             info.insert(
                 child.index(),
