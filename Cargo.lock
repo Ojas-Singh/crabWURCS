@@ -280,7 +280,7 @@ dependencies = [
  "heck",
  "proc-macro2 1.0.106",
  "quote 1.0.46",
- "syn",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -315,7 +315,7 @@ dependencies = [
  "crabwurcs-mol",
  "crabwurcs-pdb",
  "crabwurcs-snfg",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -325,7 +325,7 @@ dependencies = [
  "anyhow",
  "clap",
  "crabwurcs",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -339,7 +339,7 @@ dependencies = [
  "petgraph",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -350,7 +350,7 @@ dependencies = [
  "nom",
  "petgraph",
  "regex",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -361,7 +361,7 @@ dependencies = [
  "crabwurcs-core",
  "petgraph",
  "rdkit",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -375,7 +375,7 @@ dependencies = [
  "rayon-core",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -384,7 +384,7 @@ version = "0.1.0"
 dependencies = [
  "crabwurcs-core",
  "petgraph",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -448,7 +448,7 @@ dependencies = [
  "proc-macro2 1.0.106",
  "quote 1.0.46",
  "scratch",
- "syn",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -462,7 +462,7 @@ dependencies = [
  "indexmap",
  "proc-macro2 1.0.106",
  "quote 1.0.46",
- "syn",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -480,7 +480,7 @@ dependencies = [
  "indexmap",
  "proc-macro2 1.0.106",
  "quote 1.0.46",
- "syn",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -536,9 +536,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fixedbitset"
-version = "0.4.2"
+version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
+checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "flate2"
@@ -761,9 +761,9 @@ dependencies = [
 
 [[package]]
 name = "petgraph"
-version = "0.6.5"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4c5cc86750666a3ed20bdaf5ca2a0344f9c67674cae0515bec2da16fbaa47db"
+checksum = "3672b37090dbd86368a4145bc067582552b29c27377cad4e0a306c97f9bd7772"
 dependencies = [
  "fixedbitset",
  "indexmap",
@@ -845,7 +845,7 @@ dependencies = [
  "flate2",
  "log",
  "rdkit-sys",
- "thiserror",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -952,7 +952,7 @@ checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
 dependencies = [
  "proc-macro2 1.0.106",
  "quote 1.0.46",
- "syn",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -1010,6 +1010,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn"
+version = "3.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a207d6d6a2b7fc470b80443726053f18a2481b7e1eee970597051596567987a3"
+dependencies = [
+ "proc-macro2 1.0.106",
+ "quote 1.0.46",
+ "unicode-ident",
+]
+
+[[package]]
 name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1030,7 +1041,16 @@ version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
+version = "2.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09a43598840e33d5b0331f38c5e30d13bb11c11210a4b58f0d9b18a5a5eefcd9"
+dependencies = [
+ "thiserror-impl 2.0.19",
 ]
 
 [[package]]
@@ -1041,7 +1061,18 @@ checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
 dependencies = [
  "proc-macro2 1.0.106",
  "quote 1.0.46",
- "syn",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43cbfe0cf76104d42a574802844187e84a305e531ed54455f11fbde0f10541cd"
+dependencies = [
+ "proc-macro2 1.0.106",
+ "quote 1.0.46",
+ "syn 3.0.2",
 ]
 
 [[package]]

@@ -58,7 +58,7 @@ The notation and drawing pipeline is working end to end with comprehensive test 
 - Non-glycans return `NoGlycanFound`
 
 ### Toolchain
-- **Minimum Rust version**: 1.88 (required by the pure-Rust chemistry backend's use of let-chain syntax)
+- **Minimum Rust version**: 1.80 (updated from 1.88)
 - **Development version**: Currently tested on Rust 1.97
 - **Dependencies**: Pure-Rust by default with optional RDKit backend via `rdkit` feature
 

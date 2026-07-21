@@ -81,7 +81,7 @@ All formats convert through a shared `ResidueGraph` model, ensuring consistent r
 
 - **[Status & Progress](docs/status.md)**: Detailed development status and testing coverage
 - **[API Documentation](https://docs.rs/crabwurcs)**: Full API reference
-- Repository: [https://github.com/your-username/crabwurcs](https://github.com/your-username/crabwurcs)
+- Repository: [https://github.com/Ojas-Singh/crabWURCS](https://github.com/Ojas-Singh/crabWURCS)
 
 ## License
 

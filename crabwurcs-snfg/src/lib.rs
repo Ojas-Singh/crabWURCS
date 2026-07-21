@@ -147,6 +147,15 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
         });
     }
 
+    // L-Sorbose (ketopentose) also uses the 'h' prefix pattern
+    if residue.anomeric_prefix.starts_with('h') && bare_str == "121" {
+        return Ok(Symbol {
+            shape: Shape::Star,
+            fill: colour::MAN,
+            label: "Sor",
+        });
+    }
+
     // WURCS encodes ulosonic-acid oxidation in the leading `A*` carbon
     // descriptors rather than in the trailing skeleton string. KDO and Bac
     // belong to SNFG's flat-hexagon "unknown/other" family.
