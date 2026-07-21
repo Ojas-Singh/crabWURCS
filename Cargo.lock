@@ -332,7 +332,6 @@ dependencies = [
 name = "crabwurcs-core"
 version = "0.1.0"
 dependencies = [
- "crabwurcs-iupac",
  "hashbrown",
  "indexmap",
  "nom",
@@ -369,7 +368,6 @@ name = "crabwurcs-pdb"
 version = "0.1.0"
 dependencies = [
  "crabwurcs-core",
- "crabwurcs-iupac",
  "pdbtbx",
  "petgraph",
  "rayon-core",

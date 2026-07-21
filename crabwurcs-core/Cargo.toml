@@ -30,4 +30,3 @@ serde = ["dep:serde", "petgraph/serde-1"]
 
 [dev-dependencies]
 serde_json = "1"
-crabwurcs-iupac = { workspace = true }
