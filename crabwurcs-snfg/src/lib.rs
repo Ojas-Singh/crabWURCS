@@ -1472,9 +1472,9 @@ mod tests {
     fn every_glycoshape_molecular_record_renders_with_known_symbols() {
         let mut records = 0usize;
         let mut unknown = Vec::new();
-        let corpus_lines = include_str!("../../crabwurcs/data/glycoshape_notations.tsv")
+        let corpus_lines = include_str!("../data/glycoshape_notations.tsv")
             .lines()
-            .chain(include_str!("../../crabwurcs/data/glycoshape_derived_notations.tsv").lines());
+            .chain(include_str!("../data/glycoshape_derived_notations.tsv").lines());
         for line in corpus_lines {
             let wurcs = line.split('\t').next().unwrap();
             let graph = crabwurcs_core::parse_wurcs(wurcs).unwrap();

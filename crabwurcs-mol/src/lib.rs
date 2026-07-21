@@ -27,9 +27,9 @@ use thiserror::Error;
 
 mod construct;
 
-const SOURCE_CORPUS: &str = include_str!("../../crabwurcs/data/glycoshape_notations.tsv");
-const DERIVED_CORPUS: &str = include_str!("../../crabwurcs/data/glycoshape_derived_notations.tsv");
-const CANONICAL_INDEX: &str = include_str!("../../crabwurcs/data/glycoshape_canonical_smiles.tsv");
+const SOURCE_CORPUS: &str = include_str!("../data/glycoshape_notations.tsv");
+const DERIVED_CORPUS: &str = include_str!("../data/glycoshape_derived_notations.tsv");
+const CANONICAL_INDEX: &str = include_str!("../data/glycoshape_canonical_smiles.tsv");
 const SMILES_MARKER: &str = "crabWURCS canonical-SMILES=";
 
 #[derive(Debug, Error)]
