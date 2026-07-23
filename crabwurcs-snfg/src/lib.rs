@@ -51,7 +51,7 @@ pub mod colour {
     pub const KDN: &str = "#5995B3"; // slate blue – KDN
     pub const IDOA: &str = "#9F6D55"; // tan/brown – IdoA
     pub const KDO: &str = "#FCC326"; // yellow – KDO
-    pub const XYL: &str = "#F47421"; // orange – Xyl
+    pub const XYL: &str = "#F47920"; // orange – Xyl (RGB 244, 121, 32)
     pub const GUL: &str = "#EF6130"; // orange – Gul (GlycoShape palette)
     pub const ALT: &str = "#F69EA1"; // pink – Alt (official SNFG RGB)
     pub const ALL: &str = "#A54399"; // purple – All (SNFG RGB palette)
@@ -543,7 +543,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
             // Xyl (xylose)
             return Ok(Symbol {
                 shape: Shape::Star,
-                fill: colour::MAN, // green - matches reference
+                fill: colour::XYL,
                 label: "Xyl",
             });
         }
@@ -1560,6 +1560,15 @@ mod tests {
         let sym = symbol_for(res).unwrap();
         assert_eq!(sym.shape, Shape::Triangle);
         assert_eq!(sym.fill, colour::FUC);
+    }
+
+    #[test]
+    fn test_symbol_xyl_uses_exact_snfg_orange() {
+        let g = parse("WURCS=2.0/1,1,0/[u212h]/1/");
+        let res = g.residue(g.root().unwrap()).unwrap();
+        let sym = symbol_for(res).unwrap();
+        assert_eq!(sym.shape, Shape::Star);
+        assert_eq!(sym.fill, "#F47920");
     }
 
     #[test]
