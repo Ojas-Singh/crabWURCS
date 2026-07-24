@@ -27,7 +27,13 @@ pub use crabwurcs_snfg as snfg;
 // Convenience re-exports of the most commonly needed types, so simple
 // consumers don't need to reach into `core::`.
 pub use crabwurcs_core::{
-    classify_residue, residue_from_kind, CoreError, CoreResult, ResidueGraph, ResidueKind,
+    CoreError, CoreResult, MotifError, MotifMatch, ResidueGraph, ResidueKind, classify_residue,
+    find_motif_matches, residue_from_kind, write_wurcs_canonical,
+};
+pub use crabwurcs_iupac::write_iupac_condensed_canonical;
+pub use crabwurcs_snfg::{
+    RenderOptions, SnfgError, SnfgResult, SourceNotation, render_png, render_png_with_motifs,
+    render_png_with_options, render_svg, render_svg_with_motifs, render_svg_with_options,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -357,5 +363,97 @@ mod tests {
                 }
             }
         }
+    }
+
+    const HIGHLIGHT_TARGET: &str = "Neu5Ac(a2-3)Gal(b1-4)[Fuc(a1-3)]GlcNAc(b1-2)Man(a1-3)[Gal(b1-3)[Fuc(a1-4)]GlcNAc(b1-2)Man(a1-6)]Man(b1-4)GlcNAc(b1-4)[Fuc(a1-6)]GlcNAc";
+    const HIGHLIGHT_MOTIF: &str = "Fuc(a1-?)[Gal(b1-?)]GlcNAc";
+
+    #[test]
+    fn glycodraw_example_finds_both_non_induced_motif_occurrences() {
+        let target = parse_notation(HIGHLIGHT_TARGET, Format::IupacCondensed).unwrap();
+        let motif = parse_notation(HIGHLIGHT_MOTIF, Format::IupacCondensed).unwrap();
+        let matches = find_motif_matches(&target, &motif).unwrap();
+        assert_eq!(matches.len(), 2);
+        assert_eq!(
+            matches
+                .iter()
+                .flat_map(|found| found.node_indices.iter())
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            6
+        );
+        assert_eq!(
+            matches
+                .iter()
+                .flat_map(|found| found.edge_indices.iter())
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            4
+        );
+    }
+
+    #[test]
+    fn motif_wildcards_generic_classes_and_exact_positions_are_respected() {
+        let target = parse_notation("Gal(b1-4)GlcNAc", Format::IupacCondensed).unwrap();
+        for motif in ["Gal(b1-?)HexNAc", "Gal(?1-4)GlcNAc"] {
+            let motif = parse_notation(motif, Format::IupacCondensed).unwrap();
+            assert_eq!(find_motif_matches(&target, &motif).unwrap().len(), 1);
+        }
+        for motif in ["Gal(b1-3)GlcNAc", "Gal(a1-4)GlcNAc", "Gal(b1-4)HexN"] {
+            let motif = parse_notation(motif, Format::IupacCondensed).unwrap();
+            assert!(find_motif_matches(&target, &motif).unwrap().is_empty());
+        }
+
+        let uncertain_target = parse_notation("Gal(?1-?)GlcNAc", Format::IupacCondensed).unwrap();
+        let exact = parse_notation("Gal(b1-4)GlcNAc", Format::IupacCondensed).unwrap();
+        assert!(
+            find_motif_matches(&uncertain_target, &exact)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn motif_rendering_uses_glycodraw_palette_outside_the_match_union() {
+        let target = parse_notation(HIGHLIGHT_TARGET, Format::IupacCondensed).unwrap();
+        let motif = parse_notation(HIGHLIGHT_MOTIF, Format::IupacCondensed).unwrap();
+        let ordinary = snfg::render_svg(&target).unwrap();
+        assert_eq!(
+            ordinary,
+            snfg::render_svg_with_motifs(&target, &[], &snfg::RenderOptions::default()).unwrap()
+        );
+
+        let highlighted =
+            snfg::render_svg_with_motifs(&target, &[motif], &snfg::RenderOptions::default())
+                .unwrap();
+        assert!(highlighted.contains(r##"[fill="#00A651"] { fill: #CDE9DF; }"##));
+        assert!(highlighted.contains(".motif-dimmed text { fill: #D9D9D9; }"));
+        assert!(!highlighted.contains("filter:"));
+        assert!(!highlighted.contains(".motif-dimmed { opacity:"));
+        assert_eq!(highlighted.matches("class=\"motif-match\"").count(), 10);
+        assert_eq!(highlighted.matches("class=\"motif-dimmed\"").count(), 15);
+
+        let neu5ac = parse_notation("Neu5Ac", Format::IupacCondensed).unwrap();
+        let union = snfg::render_svg_with_motifs(
+            &target,
+            &[
+                parse_notation(HIGHLIGHT_MOTIF, Format::IupacCondensed).unwrap(),
+                parse_notation(HIGHLIGHT_MOTIF, Format::IupacCondensed).unwrap(),
+                neu5ac,
+            ],
+            &snfg::RenderOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(union.matches("class=\"motif-match\"").count(), 11);
+        assert_eq!(union.matches("class=\"motif-dimmed\"").count(), 14);
+
+        let absent = parse_notation("Kdo", Format::IupacCondensed).unwrap();
+        let no_match =
+            snfg::render_svg_with_motifs(&target, &[absent], &snfg::RenderOptions::default())
+                .unwrap();
+        assert_eq!(no_match.matches("class=\"motif-match\"").count(), 0);
+        assert_eq!(no_match.matches("class=\"motif-dimmed\"").count(), 25);
     }
 }

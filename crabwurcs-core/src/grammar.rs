@@ -4,10 +4,10 @@ use crate::model::{
     RepeatCount, ResidueGraph, RingClosure, UndefinedLinkage, UndefinedModification,
     UndefinedParent,
 };
+use nom::IResult;
 use nom::bytes::complete::{tag, take_until};
 use nom::character::complete::char;
 use nom::sequence::delimited;
-use nom::IResult;
 use petgraph::visit::EdgeRef;
 
 type ParsedWurcsParts = (WURCSHeader, Vec<String>, Vec<u32>, String);
@@ -27,6 +27,16 @@ pub fn parse_wurcs(input: &str) -> CoreResult<ResidueGraph> {
 }
 
 pub fn write_wurcs(graph: &ResidueGraph) -> CoreResult<String> {
+    write_wurcs_impl(graph, true)
+}
+
+/// Serialize a graph to canonical WURCS without reusing a preserved source
+/// string from parsing.
+pub fn write_wurcs_canonical(graph: &ResidueGraph) -> CoreResult<String> {
+    write_wurcs_impl(graph, false)
+}
+
+fn write_wurcs_impl(graph: &ResidueGraph, preserve_source: bool) -> CoreResult<String> {
     if let Some(name) = graph
         .inner()
         .node_weights()
@@ -43,8 +53,10 @@ pub fn write_wurcs(graph: &ResidueGraph) -> CoreResult<String> {
             kind.canonical_name().to_string(),
         ));
     }
-    if let Some(source) = graph.source_wurcs() {
-        return Ok(source.to_string());
+    if preserve_source {
+        if let Some(source) = graph.source_wurcs() {
+            return Ok(source.to_string());
+        }
     }
     let inner = graph.inner();
     let node_count = inner.node_count();
@@ -344,7 +356,7 @@ fn write_unique_residue(residue: &Monosaccharide) -> String {
 
 pub fn standardize_wurcs(input: &str) -> CoreResult<String> {
     let graph = parse_wurcs(input)?;
-    write_wurcs(&graph)
+    write_wurcs_canonical(&graph)
 }
 
 #[derive(Debug)]
@@ -569,9 +581,11 @@ fn parse_anomeric_prefix(input: &str) -> (String, &str) {
             return (prefix.to_string(), rest);
         }
     }
-    if let Some(prefix) = input.chars().next().filter(|character| {
-        matches!(character, 'u' | 'a' | 'o' | 'U' | 'A')
-    }) {
+    if let Some(prefix) = input
+        .chars()
+        .next()
+        .filter(|character| matches!(character, 'u' | 'a' | 'o' | 'U' | 'A'))
+    {
         let end = prefix.len_utf8();
         (input[..end].to_string(), &input[end..])
     } else {
@@ -1147,10 +1161,12 @@ mod tests {
         let generated = write_wurcs(&graph).unwrap();
         assert!(generated.contains("*OPO*/3O/3=O"), "{generated}");
         let reparsed = parse_wurcs(&generated).unwrap();
-        assert!(reparsed
-            .inner()
-            .edge_weights()
-            .any(|linkage| linkage.map_code.as_deref() == Some("*OPO*/3O/3=O")));
+        assert!(
+            reparsed
+                .inner()
+                .edge_weights()
+                .any(|linkage| linkage.map_code.as_deref() == Some("*OPO*/3O/3=O"))
+        );
     }
 
     #[test]
@@ -1209,10 +1225,12 @@ mod tests {
         let generated = write_wurcs(&graph).unwrap();
         assert!(generated.contains("~n"), "{generated}");
         let reparsed = parse_wurcs(&generated).unwrap();
-        assert!(reparsed
-            .inner()
-            .edge_weights()
-            .any(|linkage| linkage.repeat == Some(RepeatCount::Unknown)));
+        assert!(
+            reparsed
+                .inner()
+                .edge_weights()
+                .any(|linkage| linkage.repeat == Some(RepeatCount::Unknown))
+        );
     }
 
     #[test]
@@ -1342,5 +1360,20 @@ mod tests {
     fn test_parse_hlose_substituent() {
         let result = parse_wurcs("WURCS=2.0/1,1,0/[a26h-1b_1-4_3*CO]/1/");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn canonical_writer_does_not_reuse_the_preserved_wurcs_source() {
+        let source = "WURCS=2.0/2,1,0/[u2122h][u2112h]/1/";
+        let graph = parse_wurcs(source).unwrap();
+        assert_eq!(write_wurcs(&graph).unwrap(), source);
+        assert_eq!(
+            write_wurcs_canonical(&graph).unwrap(),
+            "WURCS=2.0/1,1,0/[u2122h]/1/"
+        );
+        assert_eq!(
+            standardize_wurcs(source).unwrap(),
+            write_wurcs_canonical(&graph).unwrap()
+        );
     }
 }

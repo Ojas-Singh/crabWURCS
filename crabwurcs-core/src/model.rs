@@ -195,12 +195,18 @@ pub struct Monosaccharide {
     /// Original notation name for an SNFG-assigned residue whose chemistry is
     /// not present in the official registry. Standard WURCS cannot serialize
     /// this value without losing its identity.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub display_name: Option<String>,
     /// Semantic registry identity retained while a graph remains in memory.
     /// This disambiguates notation-level classes that share a WURCS skeleton,
     /// such as `Sia` and generic `NulO`.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub residue_kind: Option<crate::ResidueKind>,
 }
 
@@ -502,7 +508,7 @@ impl ResidueGraph {
         self.source_wurcs = Some(source);
     }
 
-    pub(crate) fn source_wurcs(&self) -> Option<&str> {
+    pub fn source_wurcs(&self) -> Option<&str> {
         self.source_wurcs.as_deref()
     }
 

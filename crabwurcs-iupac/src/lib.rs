@@ -1,9 +1,9 @@
 #![allow(dead_code)] // Legacy differential-parser helpers are retained during the port.
 
 use crabwurcs_core::{
-    classify_residue, residue_from_kind, AnomericSymbol, CarbonPosition, Linkage, Modification,
-    Monosaccharide, Probability, RepeatCount, ResidueGraph, ResidueKind, RingClosure,
-    UndefinedLinkage, UndefinedParent,
+    AnomericSymbol, CarbonPosition, Linkage, Modification, Monosaccharide, Probability,
+    RepeatCount, ResidueGraph, ResidueKind, RingClosure, UndefinedLinkage, UndefinedParent,
+    classify_residue, residue_from_kind,
 };
 use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
@@ -1555,8 +1555,7 @@ fn registry_kind_prefix(name: &str) -> Option<(ResidueKind, usize)> {
     }
     candidates.sort_by_key(|(_, candidate)| std::cmp::Reverse(candidate.len()));
     candidates.into_iter().find_map(|(kind, candidate)| {
-        if name.len() < candidate.len()
-            || !name[..candidate.len()].eq_ignore_ascii_case(candidate)
+        if name.len() < candidate.len() || !name[..candidate.len()].eq_ignore_ascii_case(candidate)
         {
             return None;
         }
@@ -1916,8 +1915,20 @@ fn parse_substituent_probability(value: &str) -> Option<Probability> {
 }
 
 pub fn write_iupac_condensed(graph: &ResidueGraph) -> IupacResult<String> {
-    if let Some(source) = graph.source_iupac() {
-        return Ok(source.to_string());
+    write_iupac_condensed_impl(graph, true)
+}
+
+/// Serialize a graph to canonical IUPAC condensed without reusing a
+/// preserved source string from parsing.
+pub fn write_iupac_condensed_canonical(graph: &ResidueGraph) -> IupacResult<String> {
+    write_iupac_condensed_impl(graph, false)
+}
+
+fn write_iupac_condensed_impl(graph: &ResidueGraph, preserve_source: bool) -> IupacResult<String> {
+    if preserve_source {
+        if let Some(source) = graph.source_iupac() {
+            return Ok(source.to_string());
+        }
     }
     let inner = graph.inner();
     if inner.node_count() == 0 {
@@ -2399,8 +2410,7 @@ pub fn parse_iupac_extended(input: &str) -> IupacResult<ResidueGraph> {
         })
         .replace("]-", "]")
         .replace("-[", "[");
-    let root_re =
-        regex::Regex::new(r"(?:(?P<stereo>[DL])-)?(?P<name>[A-Za-z0-9,]+)$")
+    let root_re = regex::Regex::new(r"(?:(?P<stereo>[DL])-)?(?P<name>[A-Za-z0-9,]+)$")
         .expect("extended root regex");
     let condensed = root_re.replace(&condensed, |caps: &regex::Captures<'_>| {
         let stereo = caps
@@ -2665,8 +2675,12 @@ pub fn parse_glycam(input: &str) -> IupacResult<ResidueGraph> {
         cleaned.truncate(start);
     }
     let cleaned = match cleaned.as_str() {
-        "G50508SG" => "DNeup5Aca2-3[DGalpNAcb1-4]DGalpb1-4DGlcpNAcb1-2[DNeup5Aca2-3[DGalpNAcb1-4]DGalpb1-4DGlcpNAcb1-4]DManpa1-3[DNeup5Aca2-3[DGalpNAcb1-4]DGalpb1-4DGlcpNAcb1-2[DNeup5Aca2-3[DGalpNAcb1-4]DGalpb1-4DGlcpNAcb1-6]DManpa1-6]DManpb1-4DGlcpNAcb1-4[LFucpa1-6]DGlcpNAc",
-        "G77147GI" => "DNeup5Gca2-3/6DGalpb1-3/4DGlcpNAcb1-2DManpa1-3/6[DManpa1-3[DManpa1-6]DManpa1-3/6]DManpb1-4DGlcpNAcb1-4DGlcpNAc",
+        "G50508SG" => {
+            "DNeup5Aca2-3[DGalpNAcb1-4]DGalpb1-4DGlcpNAcb1-2[DNeup5Aca2-3[DGalpNAcb1-4]DGalpb1-4DGlcpNAcb1-4]DManpa1-3[DNeup5Aca2-3[DGalpNAcb1-4]DGalpb1-4DGlcpNAcb1-2[DNeup5Aca2-3[DGalpNAcb1-4]DGalpb1-4DGlcpNAcb1-6]DManpa1-6]DManpb1-4DGlcpNAcb1-4[LFucpa1-6]DGlcpNAc"
+        }
+        "G77147GI" => {
+            "DNeup5Gca2-3/6DGalpb1-3/4DGlcpNAcb1-2DManpa1-3/6[DManpa1-3[DManpa1-6]DManpa1-3/6]DManpb1-4DGlcpNAcb1-4DGlcpNAc"
+        }
         _ => cleaned.as_str(),
     };
     let bridge_linked = regex::Regex::new(
@@ -2727,7 +2741,9 @@ pub fn parse_glycam(input: &str) -> IupacResult<ResidueGraph> {
 
 fn known_accession_wurcs(value: &str) -> Option<&'static str> {
     match value {
-        "G60371DN" => Some("WURCS=2.0/8,23,22/[u2122h_2*NCC/3=O][a2122h-1b_1-5_2*NCC/3=O][a1122h-1b_1-5][a1122h-1a_1-5][a2112h-1b_1-5][Aad21122h-2a_2-6_5*NCC/3=O][a2112h-1b_1-5_2*NCC/3=O][a1221m-1a_1-5]/1-2-3-4-2-5-6-7-2-5-6-7-2-4-2-5-6-7-2-5-6-7-8/a4-b1_a6-w1_b4-c1_c3-d1_c4-m1_c6-n1_d2-e1_d4-i1_e4-f1_f3-g2_f4-h1_i4-j1_j3-k2_j4-l1_n2-o1_n6-s1_o4-p1_p3-q2_p4-r1_s4-t1_t3-u2_t4-v1"),
+        "G60371DN" => Some(
+            "WURCS=2.0/8,23,22/[u2122h_2*NCC/3=O][a2122h-1b_1-5_2*NCC/3=O][a1122h-1b_1-5][a1122h-1a_1-5][a2112h-1b_1-5][Aad21122h-2a_2-6_5*NCC/3=O][a2112h-1b_1-5_2*NCC/3=O][a1221m-1a_1-5]/1-2-3-4-2-5-6-7-2-5-6-7-2-4-2-5-6-7-2-5-6-7-8/a4-b1_a6-w1_b4-c1_c3-d1_c4-m1_c6-n1_d2-e1_d4-i1_e4-f1_f3-g2_f4-h1_i4-j1_j3-k2_j4-l1_n2-o1_n6-s1_o4-p1_p3-q2_p4-r1_s4-t1_t3-u2_t4-v1",
+        ),
         _ => None,
     }
 }
@@ -2738,17 +2754,16 @@ pub fn write_glycam(graph: &ResidueGraph) -> IupacResult<String> {
         .node_weights()
         .find(|residue| residue.display_name.is_some())
         .or_else(|| {
-            graph.inner().node_weights().find(|residue| {
-                classify_residue(residue).is_some_and(ResidueKind::is_generic)
-            })
+            graph
+                .inner()
+                .node_weights()
+                .find(|residue| classify_residue(residue).is_some_and(ResidueKind::is_generic))
         });
     if let Some(residue) = unrepresentable {
         let name = residue
             .display_name
             .clone()
-            .or_else(|| {
-                classify_residue(residue).map(|kind| kind.canonical_name().to_string())
-            })
+            .or_else(|| classify_residue(residue).map(|kind| kind.canonical_name().to_string()))
             .unwrap_or_else(|| "unknown".into());
         return Err(IupacError::UnrepresentableInFormat {
             residue: name,
@@ -3237,9 +3252,8 @@ mod tests {
                 continue;
             };
             let name = kind.canonical_name();
-            let graph = parse_iupac_condensed(name).unwrap_or_else(|error| {
-                panic!("failed to parse {name} ({kind:?}): {error}")
-            });
+            let graph = parse_iupac_condensed(name)
+                .unwrap_or_else(|error| panic!("failed to parse {name} ({kind:?}): {error}"));
             let wurcs = crabwurcs_core::write_wurcs(&graph).unwrap();
             let reparsed = crabwurcs_core::parse_wurcs(&wurcs).unwrap();
             assert_eq!(
@@ -3294,10 +3308,7 @@ mod tests {
         assert!(graph.is_composition());
         let wurcs = crabwurcs_core::write_wurcs(&graph).unwrap();
         let reparsed = crabwurcs_core::parse_wurcs(&wurcs).unwrap();
-        assert_eq!(
-            write_iupac_condensed(&reparsed).unwrap(),
-            composition
-        );
+        assert_eq!(write_iupac_condensed(&reparsed).unwrap(), composition);
     }
 
     #[test]
@@ -3341,5 +3352,12 @@ mod tests {
                     if residue == name
             ));
         }
+    }
+
+    #[test]
+    fn canonical_condensed_writer_does_not_reuse_the_source_alias() {
+        let graph = parse_iupac_condensed("Glucose").unwrap();
+        assert_eq!(write_iupac_condensed(&graph).unwrap(), "Glucose");
+        assert_eq!(write_iupac_condensed_canonical(&graph).unwrap(), "Glc");
     }
 }

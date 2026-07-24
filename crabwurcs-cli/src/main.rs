@@ -53,6 +53,27 @@ impl From<TextFormat> for crabwurcs::Format {
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
+enum MotifTextFormat {
+    Auto,
+    Wurcs,
+    IupacCondensed,
+    IupacExtended,
+    Glycam,
+}
+
+impl From<MotifTextFormat> for crabwurcs::Format {
+    fn from(value: MotifTextFormat) -> Self {
+        match value {
+            MotifTextFormat::Auto => Self::Auto,
+            MotifTextFormat::Wurcs => Self::Wurcs,
+            MotifTextFormat::IupacCondensed => Self::IupacCondensed,
+            MotifTextFormat::IupacExtended => Self::IupacExtended,
+            MotifTextFormat::Glycam => Self::Glycam,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
 enum ChemFormatArg {
     Mol,
     Sdf,
@@ -112,9 +133,9 @@ enum Command {
         to: TextFormat,
     },
 
-    /// Render a glycan as an SNFG SVG figure. Equivalent to seq2snfg.
+    /// Render a glycan as an SNFG SVG or PNG figure. Equivalent to seq2snfg.
     Render {
-        /// WURCS input string, or a file path if `--input-file` is set.
+        /// Glycan notation string, or a file path if `--input-file` is set.
         /// Reads stdin if omitted.
         input: Option<String>,
         #[arg(long)]
@@ -123,6 +144,13 @@ enum Command {
         output: Option<PathBuf>,
         #[arg(long, value_enum, default_value = "auto")]
         from: TextFormat,
+        /// Motif pattern to highlight. May be repeated; every occurrence of
+        /// every motif is highlighted.
+        #[arg(long = "highlight-motif")]
+        highlight_motifs: Vec<String>,
+        /// Notation used by every --highlight-motif value.
+        #[arg(long, value_enum, default_value = "auto")]
+        motif_from: MotifTextFormat,
     },
 }
 
@@ -144,7 +172,16 @@ fn main() -> ExitCode {
             input_file,
             output,
             from,
-        } => run_render(input, input_file, output, from),
+            highlight_motifs,
+            motif_from,
+        } => run_render(
+            input,
+            input_file,
+            output,
+            from,
+            highlight_motifs,
+            motif_from,
+        ),
     };
 
     match result {
@@ -247,14 +284,222 @@ fn run_render(
     input_file: bool,
     output: Option<PathBuf>,
     from_format: TextFormat,
+    highlight_motifs: Vec<String>,
+    motif_from: MotifTextFormat,
 ) -> anyhow::Result<()> {
     let text = read_text_input(input, input_file)?;
-    let graph = crabwurcs::parse_notation(&text, from_format.into())?;
-    let svg = crabwurcs::snfg::render_svg(&graph)?;
-
-    match output {
-        Some(path) => std::fs::write(path, svg)?,
-        None => println!("{svg}"),
+    let requested_format: crabwurcs::Format = from_format.into();
+    let actual_format = if requested_format == crabwurcs::Format::Auto {
+        crabwurcs::detect_format(&text)
+    } else {
+        requested_format
+    };
+    let graph = crabwurcs::parse_notation(&text, actual_format)?;
+    let render_options = crabwurcs::snfg::RenderOptions {
+        source_notation: Some(crabwurcs::snfg::SourceNotation::new(
+            format_name(actual_format),
+            text.trim(),
+        )),
+        ..crabwurcs::snfg::RenderOptions::default()
+    };
+    let output_kind = output
+        .as_ref()
+        .map(|path| render_output_kind(path))
+        .transpose()?;
+    let motifs = highlight_motifs
+        .iter()
+        .enumerate()
+        .map(|(index, motif)| {
+            crabwurcs::parse_notation(motif, motif_from.into()).map_err(|error| {
+                anyhow::anyhow!(
+                    "failed to parse highlight motif {} ({motif:?}): {error}",
+                    index + 1
+                )
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    for (index, motif) in motifs.iter().enumerate() {
+        crabwurcs::find_motif_matches(&graph, motif).map_err(|error| {
+            anyhow::anyhow!(
+                "unsupported highlight motif {} ({:?}): {error}",
+                index + 1,
+                highlight_motifs[index]
+            )
+        })?;
+    }
+    match (output, output_kind) {
+        (None, None) => {
+            let svg = if motifs.is_empty() {
+                crabwurcs::snfg::render_svg_with_options(&graph, &render_options)?
+            } else {
+                crabwurcs::snfg::render_svg_with_motifs(&graph, &motifs, &render_options)?
+            };
+            println!("{svg}");
+        }
+        (Some(path), Some(RenderOutputKind::Svg)) => {
+            let svg = if motifs.is_empty() {
+                crabwurcs::snfg::render_svg_with_options(&graph, &render_options)?
+            } else {
+                crabwurcs::snfg::render_svg_with_motifs(&graph, &motifs, &render_options)?
+            };
+            std::fs::write(path, svg)?;
+        }
+        (Some(path), Some(RenderOutputKind::Png)) => {
+            let png = if motifs.is_empty() {
+                crabwurcs::snfg::render_png_with_options(&graph, &render_options)?
+            } else {
+                crabwurcs::snfg::render_png_with_motifs(&graph, &motifs, &render_options)?
+            };
+            std::fs::write(path, png)?;
+        }
+        _ => unreachable!("output path and inferred kind must be present together"),
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenderOutputKind {
+    Svg,
+    Png,
+}
+
+fn render_output_kind(path: &std::path::Path) -> anyhow::Result<RenderOutputKind> {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "render output path must end in .svg or .png: {}",
+                path.display()
+            )
+        })?;
+    if extension.eq_ignore_ascii_case("svg") {
+        Ok(RenderOutputKind::Svg)
+    } else if extension.eq_ignore_ascii_case("png") {
+        Ok(RenderOutputKind::Png)
+    } else {
+        anyhow::bail!("unsupported render output extension .{extension}; expected .svg or .png")
+    }
+}
+
+fn format_name(format: crabwurcs::Format) -> &'static str {
+    match format {
+        crabwurcs::Format::Auto => "auto",
+        crabwurcs::Format::Wurcs => "wurcs",
+        crabwurcs::Format::IupacCondensed => "iupac-condensed",
+        crabwurcs::Format::IupacExtended => "iupac-extended",
+        crabwurcs::Format::Glycam => "glycam",
+        crabwurcs::Format::Smiles => "smiles",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_accepts_repeatable_motifs_and_an_explicit_motif_format() {
+        let cli = Cli::try_parse_from([
+            "crabwurcs",
+            "render",
+            "--from",
+            "iupac-condensed",
+            "--highlight-motif",
+            "Fuc(a1-?)GlcNAc",
+            "--highlight-motif",
+            "Gal(b1-?)GlcNAc",
+            "--motif-from",
+            "iupac-condensed",
+            "Gal(b1-4)GlcNAc",
+        ])
+        .unwrap();
+        let Command::Render {
+            highlight_motifs,
+            motif_from,
+            ..
+        } = cli.command
+        else {
+            panic!("expected render command");
+        };
+        assert_eq!(highlight_motifs.len(), 2);
+        assert!(matches!(motif_from, MotifTextFormat::IupacCondensed));
+    }
+
+    #[test]
+    fn smiles_is_not_an_accepted_motif_format() {
+        assert!(
+            Cli::try_parse_from([
+                "crabwurcs",
+                "render",
+                "--highlight-motif",
+                "C1CC1",
+                "--motif-from",
+                "smiles",
+                "Glc",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn render_output_format_is_inferred_case_insensitively() {
+        assert_eq!(
+            render_output_kind(std::path::Path::new("figure.svg")).unwrap(),
+            RenderOutputKind::Svg
+        );
+        assert_eq!(
+            render_output_kind(std::path::Path::new("figure.SVG")).unwrap(),
+            RenderOutputKind::Svg
+        );
+        assert_eq!(
+            render_output_kind(std::path::Path::new("figure.png")).unwrap(),
+            RenderOutputKind::Png
+        );
+        assert_eq!(
+            render_output_kind(std::path::Path::new("figure.PNG")).unwrap(),
+            RenderOutputKind::Png
+        );
+        assert!(render_output_kind(std::path::Path::new("figure")).is_err());
+        assert!(render_output_kind(std::path::Path::new("figure.jpg")).is_err());
+    }
+
+    #[test]
+    fn render_writes_and_overwrites_svg_and_png_files() {
+        let directory =
+            std::env::temp_dir().join(format!("crabwurcs-render-test-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let svg_path = directory.join("glycan.SVG");
+        let png_path = directory.join("glycan.PNG");
+        std::fs::write(&svg_path, "old").unwrap();
+        std::fs::write(&png_path, "old").unwrap();
+
+        run_render(
+            Some("Glc".into()),
+            false,
+            Some(svg_path.clone()),
+            TextFormat::IupacCondensed,
+            Vec::new(),
+            MotifTextFormat::Auto,
+        )
+        .unwrap();
+        run_render(
+            Some("Glc".into()),
+            false,
+            Some(png_path.clone()),
+            TextFormat::IupacCondensed,
+            Vec::new(),
+            MotifTextFormat::Auto,
+        )
+        .unwrap();
+
+        let svg = std::fs::read_to_string(&svg_path).unwrap();
+        assert!(svg.starts_with("<svg"));
+        assert!(svg.contains("<metadata id=\"crabwurcs-notations\">"));
+        let png = std::fs::read(&png_path).unwrap();
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+
+        std::fs::remove_file(svg_path).unwrap();
+        std::fs::remove_file(png_path).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
 }

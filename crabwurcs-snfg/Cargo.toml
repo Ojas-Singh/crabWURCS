@@ -12,5 +12,10 @@ categories.workspace = true
 
 [dependencies]
 crabwurcs-core = { workspace = true }
+crabwurcs-iupac = { workspace = true }
 thiserror = { workspace = true }
 petgraph = { workspace = true }
+resvg = { workspace = true }
+
+[dev-dependencies]
+png = "0.18"

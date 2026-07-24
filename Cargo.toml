@@ -13,8 +13,8 @@ members = [
 # Shared metadata inherited by member crates via `<field>.workspace = true`.
 [workspace.package]
 version = "0.1.0"
-edition = "2021"
-rust-version = "1.80"
+edition = "2024"
+rust-version = "1.97"
 authors = ["crabWURCS contributors"]
 license = "MIT"
 repository = "https://github.com/Ojas-Singh/crabWURCS"
@@ -41,6 +41,7 @@ rayon-core = "1.12"
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 anyhow = "1"
+resvg = { version = "0.47", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 
 # Chemistry backend for crabwurcs-mol. Confirmed on crates.io as the
 # right crate name (not `rdkit-rs`, which is a separate, far less mature

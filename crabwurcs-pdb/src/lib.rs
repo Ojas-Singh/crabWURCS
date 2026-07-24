@@ -790,11 +790,13 @@ mod tests {
         for code in ["0GL", "0gL"] {
             let neu5gc = residue_to_monosaccharide(code);
             assert_eq!(neu5gc.anomeric_position, 2);
-            assert!(neu5gc
-                .modifications
-                .iter()
-                .any(|modification| modification.position.0 == 5
-                    && modification.descriptor == "NCCO/3=O"));
+            assert!(
+                neu5gc
+                    .modifications
+                    .iter()
+                    .any(|modification| modification.position.0 == 5
+                        && modification.descriptor == "NCCO/3=O")
+            );
         }
 
         let arabinofuranose = residue_to_monosaccharide("0aU");
@@ -802,10 +804,12 @@ mod tests {
         assert_eq!(arabinofuranose.skeleton_code, "211h");
 
         let glucosamine_sulfate = residue_to_monosaccharide("UYS");
-        assert!(glucosamine_sulfate
-            .modifications
-            .iter()
-            .any(|modification| modification.descriptor == "NSO/3=O/3=O"));
+        assert!(
+            glucosamine_sulfate
+                .modifications
+                .iter()
+                .any(|modification| modification.descriptor == "NSO/3=O/3=O")
+        );
 
         let iduronate = residue_to_monosaccharide("IDR");
         assert_eq!(iduronate.skeleton_code, "2121Ah");

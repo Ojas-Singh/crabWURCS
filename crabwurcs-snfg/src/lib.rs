@@ -1,8 +1,10 @@
-use crabwurcs_core::{classify_residue, Monosaccharide, ResidueGraph, ResidueKind};
+use crabwurcs_core::{
+    Monosaccharide, MotifError, ResidueGraph, ResidueKind, classify_residue, find_motif_matches,
+};
+use petgraph::Direction;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
-use petgraph::Direction;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use thiserror::Error;
 
 // ── Error types ────────────────────────────────────────────────────────────
@@ -18,6 +20,21 @@ pub enum SnfgError {
 
     #[error(transparent)]
     Core(#[from] crabwurcs_core::CoreError),
+
+    #[error(transparent)]
+    Motif(#[from] MotifError),
+
+    #[error("failed to parse generated SVG for PNG rendering: {0}")]
+    SvgParse(String),
+
+    #[error("PNG dimensions overflow or are unsupported")]
+    RasterDimensions,
+
+    #[error("could not allocate the PNG raster surface")]
+    RasterAllocation,
+
+    #[error("failed to encode PNG: {0}")]
+    PngEncoding(String),
 }
 
 pub type SnfgResult<T> = Result<T, SnfgError>;
@@ -325,7 +342,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
                 has_n_mod,
                 has_nac,
                 false,
-            ))
+            ));
         }
         "2112" | "1221" if !has_deoxy => {
             return Ok(hexose_family_symbol(
@@ -338,7 +355,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
                 has_n_mod,
                 has_nac,
                 false,
-            ))
+            ));
         }
         "1122" | "2211" if !has_deoxy => {
             return Ok(hexose_family_symbol(
@@ -351,7 +368,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
                 has_n_mod,
                 has_nac,
                 false,
-            ))
+            ));
         }
         "2212" | "1121" => {
             return Ok(hexose_family_symbol(
@@ -364,7 +381,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
                 has_n_mod,
                 has_nac,
                 false,
-            ))
+            ));
         }
         "1222" | "2111" => {
             return Ok(hexose_family_symbol(
@@ -377,7 +394,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
                 has_n_mod,
                 has_nac,
                 false,
-            ))
+            ));
         }
         "2222" | "1111" => {
             return Ok(hexose_family_symbol(
@@ -390,7 +407,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
                 has_n_mod,
                 has_nac,
                 false,
-            ))
+            ));
         }
         "1112" | "2221" => {
             return Ok(hexose_family_symbol(
@@ -403,7 +420,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
                 has_n_mod,
                 has_nac,
                 false,
-            ))
+            ));
         }
         "2121" | "1212" => {
             return Ok(hexose_family_symbol(
@@ -416,7 +433,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
                 has_n_mod,
                 has_nac,
                 true,
-            ))
+            ));
         }
         _ => {}
     }
@@ -749,8 +766,24 @@ pub const H_SPACING: f64 = 100.0;
 pub const V_SPACING: f64 = 100.0;
 pub const BOND_W: f64 = 4.0;
 pub const LABEL_SIZE: f64 = 20.0;
+pub const PNG_SCALE: u32 = 2;
 
 // ── Options ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct SourceNotation {
+    pub format: String,
+    pub value: String,
+}
+
+impl SourceNotation {
+    pub fn new(format: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            format: format.into(),
+            value: value.into(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct RenderOptions {
@@ -759,6 +792,9 @@ pub struct RenderOptions {
     pub show_linkages: bool, // show linkage positions on bonds
     pub font_family: String,
     pub scale: f64,
+    /// Exact source notation supplied by the caller. When absent, metadata
+    /// falls back to source text retained by the parsed graph.
+    pub source_notation: Option<SourceNotation>,
 }
 
 impl Default for RenderOptions {
@@ -769,6 +805,7 @@ impl Default for RenderOptions {
             show_linkages: true,
             font_family: "Arial, Helvetica, sans-serif".into(),
             scale: 1.0,
+            source_notation: None,
         }
     }
 }
@@ -816,7 +853,13 @@ fn resolve_triangle_collisions(graph: &ResidueGraph, info: &mut HashMap<usize, L
         .inner()
         .edge_references()
         .filter(|edge| is_fucose(graph, edge.target()) && is_terminal(graph, edge.target()))
-        .map(|edge| (edge.source(), edge.target(), edge.weight().parent_position.0))
+        .map(|edge| {
+            (
+                edge.source(),
+                edge.target(),
+                edge.weight().parent_position.0,
+            )
+        })
         .collect::<Vec<_>>();
     branches.sort_by(|(left_parent, _, _), (right_parent, _, _)| {
         info[&left_parent.index()]
@@ -841,36 +884,42 @@ fn resolve_triangle_collisions(graph: &ResidueGraph, info: &mut HashMap<usize, L
             && parent_fucose_children.iter().any(|&pos| pos == 4);
 
         // Check if this is core fucose - attached to the root GlcNAc (reducing end)
-        let is_core_fucose = linkage_pos == 6 && graph
-            .residue(parent)
-            .is_some_and(|res| {
+        let is_core_fucose = linkage_pos == 6
+            && graph.residue(parent).is_some_and(|res| {
                 let skel = &res.skeleton_code;
                 let bare: String = skel.chars().take_while(|c| c.is_ascii_digit()).collect();
                 // Check if this is a GlcNAc (2122 with N-acetyl) AND is the root node
-                bare == "2122" && res.modifications.iter().any(|m| m.descriptor.contains("NCC")) && parent == graph.root().unwrap()
+                bare == "2122"
+                    && res
+                        .modifications
+                        .iter()
+                        .any(|m| m.descriptor.contains("NCC"))
+                    && parent == graph.root().unwrap()
             });
 
         // Use the same positioning logic as layout_subtree for consistency
         let desired_y = if has_both_alpha3_and_alpha6 {
-            parent_layout.y + if linkage_pos == 6 {
-                -V_SPACING  // α6 fucose goes UP when paired with α3
-            } else if linkage_pos == 3 {
-                V_SPACING   // α3 fucose goes DOWN when paired with α6
-            } else {
-                V_SPACING   // other positions default to DOWN
-            }
+            parent_layout.y
+                + if linkage_pos == 6 {
+                    -V_SPACING // α6 fucose goes UP when paired with α3
+                } else if linkage_pos == 3 {
+                    V_SPACING // α3 fucose goes DOWN when paired with α6
+                } else {
+                    V_SPACING // other positions default to DOWN
+                }
         } else if has_both_alpha2_and_alpha4 {
-            parent_layout.y + if linkage_pos == 4 {
-                -V_SPACING  // α4 rhamnose goes UP when paired with α2
-            } else if linkage_pos == 2 {
-                V_SPACING   // α2 rhamnose goes DOWN when paired with α4
-            } else {
-                V_SPACING   // other positions default to DOWN
-            }
+            parent_layout.y
+                + if linkage_pos == 4 {
+                    -V_SPACING // α4 rhamnose goes UP when paired with α2
+                } else if linkage_pos == 2 {
+                    V_SPACING // α2 rhamnose goes DOWN when paired with α4
+                } else {
+                    V_SPACING // other positions default to DOWN
+                }
         } else if is_core_fucose {
-            parent_layout.y + -V_SPACING  // Core α6 fucose defaults to UP
+            parent_layout.y + -V_SPACING // Core α6 fucose defaults to UP
         } else {
-            parent_layout.y + V_SPACING  // Single triangle defaults to DOWN
+            parent_layout.y + V_SPACING // Single triangle defaults to DOWN
         };
 
         let collision = info.iter().any(|(index, layout)| {
@@ -943,45 +992,47 @@ fn layout_subtree(
         // SNFG convention draws terminal fucose/rhamnose vertically aligned with parent.
         // To prevent overlap when multiple triangles are attached to the same parent,
         // position them in opposite vertical directions when both are present.
-        let has_both_alpha3_and_alpha6 = fucose_children.iter()
-            .any(|(_, pos)| *pos == 3) && fucose_children.iter()
-            .any(|(_, pos)| *pos == 6);
-        let has_both_alpha2_and_alpha4 = fucose_children.iter()
-            .any(|(_, pos)| *pos == 2) && fucose_children.iter()
-            .any(|(_, pos)| *pos == 4);
+        let has_both_alpha3_and_alpha6 = fucose_children.iter().any(|(_, pos)| *pos == 3)
+            && fucose_children.iter().any(|(_, pos)| *pos == 6);
+        let has_both_alpha2_and_alpha4 = fucose_children.iter().any(|(_, pos)| *pos == 2)
+            && fucose_children.iter().any(|(_, pos)| *pos == 4);
 
         for (child, linkage_pos) in fucose_children.into_iter() {
             visited.insert(child.index());
             // Check if this is core fucose - attached to the root GlcNAc (reducing end)
-            let is_core_fucose = linkage_pos == 6 && graph
-                .residue(node)
-                .is_some_and(|res| {
+            let is_core_fucose = linkage_pos == 6
+                && graph.residue(node).is_some_and(|res| {
                     let skel = &res.skeleton_code;
                     let bare: String = skel.chars().take_while(|c| c.is_ascii_digit()).collect();
                     // Check if this is a GlcNAc (2122 with N-acetyl) AND is the root node
-                    bare == "2122" && res.modifications.iter().any(|m| m.descriptor.contains("NCC")) && node == graph.root().unwrap()
+                    bare == "2122"
+                        && res
+                            .modifications
+                            .iter()
+                            .any(|m| m.descriptor.contains("NCC"))
+                        && node == graph.root().unwrap()
                 });
 
             let vertical_offset = if has_both_alpha3_and_alpha6 {
                 if linkage_pos == 6 {
-                    -V_SPACING  // α6 fucose goes UP when paired with α3
+                    -V_SPACING // α6 fucose goes UP when paired with α3
                 } else if linkage_pos == 3 {
-                    V_SPACING   // α3 fucose goes DOWN when paired with α6
+                    V_SPACING // α3 fucose goes DOWN when paired with α6
                 } else {
-                    V_SPACING   // other positions default to DOWN
+                    V_SPACING // other positions default to DOWN
                 }
             } else if has_both_alpha2_and_alpha4 {
                 if linkage_pos == 4 {
-                    -V_SPACING  // α4 rhamnose goes UP when paired with α2
+                    -V_SPACING // α4 rhamnose goes UP when paired with α2
                 } else if linkage_pos == 2 {
-                    V_SPACING   // α2 rhamnose goes DOWN when paired with α4
+                    V_SPACING // α2 rhamnose goes DOWN when paired with α4
                 } else {
-                    V_SPACING   // other positions default to DOWN
+                    V_SPACING // other positions default to DOWN
                 }
             } else if is_core_fucose {
-                -V_SPACING  // Core α6 fucose defaults to UP
+                -V_SPACING // Core α6 fucose defaults to UP
             } else {
-                V_SPACING   // Single triangle defaults to DOWN
+                V_SPACING // Single triangle defaults to DOWN
             };
             info.insert(
                 child.index(),
@@ -1096,12 +1147,118 @@ pub fn render_svg(graph: &ResidueGraph) -> SnfgResult<String> {
 }
 
 pub fn render_svg_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> SnfgResult<String> {
+    render_svg_internal(graph, opts, None)
+}
+
+/// Render an SNFG SVG while highlighting the union of every occurrence of
+/// every supplied motif.
+///
+/// Matched nodes and motif-internal edges remain fully opaque. Everything
+/// else uses GlycoDraw's muted SNFG palette while remaining fully opaque. This
+/// prevents bonds drawn behind unmatched residues from showing through their
+/// symbols. An empty motif list is identical to [`render_svg_with_options`].
+pub fn render_svg_with_motifs(
+    graph: &ResidueGraph,
+    motifs: &[ResidueGraph],
+    opts: &RenderOptions,
+) -> SnfgResult<String> {
+    if motifs.is_empty() {
+        return render_svg_with_options(graph, opts);
+    }
+    let mut selection = MotifSelection::default();
+    for motif in motifs {
+        for found in find_motif_matches(graph, motif)? {
+            selection.nodes.extend(found.node_indices);
+            selection.edges.extend(found.edge_indices);
+        }
+    }
+    render_svg_internal(graph, opts, Some(&selection))
+}
+
+/// Render an SNFG diagram as a transparent PNG at twice the SVG dimensions.
+pub fn render_png(graph: &ResidueGraph) -> SnfgResult<Vec<u8>> {
+    render_png_with_options(graph, &RenderOptions::default())
+}
+
+/// Render an SNFG diagram as a transparent PNG using the supplied SVG
+/// rendering options.
+pub fn render_png_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> SnfgResult<Vec<u8>> {
+    svg_to_png(&render_svg_with_options(graph, opts)?)
+}
+
+/// Render a motif-highlighted SNFG diagram as a transparent PNG at twice the
+/// SVG dimensions.
+pub fn render_png_with_motifs(
+    graph: &ResidueGraph,
+    motifs: &[ResidueGraph],
+    opts: &RenderOptions,
+) -> SnfgResult<Vec<u8>> {
+    svg_to_png(&render_svg_with_motifs(graph, motifs, opts)?)
+}
+
+fn svg_to_png(svg: &str) -> SnfgResult<Vec<u8>> {
+    let mut options = resvg::usvg::Options::default();
+    options.fontdb_mut().load_system_fonts();
+    let tree = resvg::usvg::Tree::from_str(svg, &options)
+        .map_err(|error| SnfgError::SvgParse(error.to_string()))?;
+    let svg_size = tree.size().to_int_size();
+    let width = svg_size
+        .width()
+        .checked_mul(PNG_SCALE)
+        .ok_or(SnfgError::RasterDimensions)?;
+    let height = svg_size
+        .height()
+        .checked_mul(PNG_SCALE)
+        .ok_or(SnfgError::RasterDimensions)?;
+    let mut pixmap =
+        resvg::tiny_skia::Pixmap::new(width, height).ok_or(SnfgError::RasterAllocation)?;
+    let transform = resvg::tiny_skia::Transform::from_scale(PNG_SCALE as f32, PNG_SCALE as f32);
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    pixmap
+        .encode_png()
+        .map_err(|error| SnfgError::PngEncoding(error.to_string()))
+}
+
+#[derive(Debug, Default)]
+struct MotifSelection {
+    nodes: BTreeSet<usize>,
+    edges: BTreeSet<usize>,
+}
+
+fn highlight_class(selected: bool) -> &'static str {
+    if selected {
+        "motif-match"
+    } else {
+        "motif-dimmed"
+    }
+}
+
+const MOTIF_DEEMPHASIS_CSS: &str = r##"  .motif-match { opacity: 1; }
+  .motif-dimmed [fill="#0072BC"] { fill: #CDE7EF; }
+  .motif-dimmed [fill="#00A651"] { fill: #CDE9DF; }
+  .motif-dimmed [fill="#FFD400"] { fill: #FFF6DE; }
+  .motif-dimmed [fill="#F47920"] { fill: #FDE7E0; }
+  .motif-dimmed [fill="#F69EA1"] { fill: #FDF0F1; }
+  .motif-dimmed [fill="#A54399"] { fill: #F1E6ED; }
+  .motif-dimmed [fill="#8FCCE9"] { fill: #EEF8FB; }
+  .motif-dimmed [fill="#A17A4D"] { fill: #F1E9E5; }
+  .motif-dimmed [fill="#ED1C24"] { fill: #F7E0E0; }
+  .motif-dimmed [stroke="#000000"],
+  .motif-dimmed line { stroke: #D9D9D9; }
+  .motif-dimmed text { fill: #D9D9D9; }
+"##;
+
+fn render_svg_internal(
+    graph: &ResidueGraph,
+    opts: &RenderOptions,
+    highlights: Option<&MotifSelection>,
+) -> SnfgResult<String> {
     let inner = graph.inner();
     if inner.node_count() == 0 {
-        return Ok(empty_svg());
+        return Ok(empty_svg(graph, opts));
     }
     if graph.is_composition() {
-        return render_composition_svg(graph, opts);
+        return render_composition_svg(graph, opts, highlights);
     }
 
     let root = graph.root().unwrap_or_else(|| NodeIndex::from(0u32));
@@ -1127,15 +1284,21 @@ pub fn render_svg_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> Sn
     };
 
     // ── SVG header ────────────────────────────────────────────────────
+    let highlight_css = if highlights.is_some() {
+        MOTIF_DEEMPHASIS_CSS
+    } else {
+        ""
+    };
+    let metadata = svg_metadata(graph, opts);
     let mut svg = format!(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SNFG glycan diagram" viewBox="0 0 {w} {h}" width="{w}" height="{h}">
-<style>
+        r#"<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="snfg-title snfg-desc" viewBox="0 0 {w} {h}" width="{w}" height="{h}">
+{metadata}<style>
   .bond {{ stroke: #000; stroke-width: {bw}; fill: none; stroke-linecap: round; }}
   .uncertain {{ stroke: #555; stroke-width: {ubw}; fill: none; stroke-linecap: round; stroke-dasharray: 8 7; }}
   .link {{ font-family: {ff}; font-size: {ls}px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
   .node {{ fill: none; }}
   .res-label {{ font-family: {ff}; font-size: 11px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
-</style>
+{highlight_css}</style>
 "#,
         w = canvas_w,
         h = canvas_h,
@@ -1143,6 +1306,8 @@ pub fn render_svg_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> Sn
         ubw = 2.5 * s,
         ff = opts.font_family,
         ls = LABEL_SIZE * s,
+        highlight_css = highlight_css,
+        metadata = metadata,
     );
 
     // ── Edges and linkage labels ──────────────────────────────────────
@@ -1160,6 +1325,14 @@ pub fn render_svg_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> Sn
         } else {
             "bond"
         };
+        if let Some(selection) = highlights {
+            svg.push_str(&format!(
+                r#"<g data-edge-index="{}" class="{}">
+"#,
+                edge.id().index(),
+                highlight_class(selection.edges.contains(&edge.id().index()))
+            ));
+        }
         svg.push_str(&format!(
             r#"<line x1="{px}" y1="{py}" x2="{cx}" y2="{cy}" class="{class}"/>
 "#,
@@ -1175,6 +1348,9 @@ pub fn render_svg_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> Sn
                 s,
             );
         }
+        if highlights.is_some() {
+            svg.push_str("</g>\n");
+        }
     }
 
     for undefined in graph.undefined_linkages() {
@@ -1187,12 +1363,19 @@ pub fn render_svg_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> Sn
                 continue;
             };
             let (px, py) = to_canvas(parent_layout);
+            if highlights.is_some() {
+                svg.push_str(r#"<g class="motif-dimmed" data-undefined-linkage="true">"#);
+                svg.push('\n');
+            }
             svg.push_str(&format!(
                 r#"<line x1="{px}" y1="{py}" x2="{cx}" y2="{cy}" class="uncertain"/>
 "#,
             ));
             if opts.show_linkages && candidate_index == 0 {
                 draw_linkage_text(&mut svg, px, py, cx, cy, "?", s);
+            }
+            if highlights.is_some() {
+                svg.push_str("</g>\n");
             }
         }
     }
@@ -1209,6 +1392,10 @@ pub fn render_svg_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> Sn
         }
         let label_x = candidates.iter().map(|(x, _)| *x).fold(f64::MIN, f64::max) + 65.0 * s;
         let label_y = candidates.iter().map(|(_, y)| y).sum::<f64>() / candidates.len() as f64;
+        if highlights.is_some() {
+            svg.push_str(r#"<g class="motif-dimmed" data-undefined-modification="true">"#);
+            svg.push('\n');
+        }
         for (parent_x, parent_y) in &candidates {
             svg.push_str(&format!(
                 r#"<line x1="{parent_x}" y1="{parent_y}" x2="{label_x}" y2="{label_y}" class="uncertain"/>
@@ -1226,6 +1413,9 @@ pub fn render_svg_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> Sn
             36.0 * s,
             6.0 * s,
         ));
+        if highlights.is_some() {
+            svg.push_str("</g>\n");
+        }
     }
 
     // ── Nodes ──────────────────────────────────────────────────────────
@@ -1235,6 +1425,14 @@ pub fn render_svg_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> Sn
         {
             let (cx, cy) = to_canvas(li);
             let symbol = symbol_for(residue)?;
+            if let Some(selection) = highlights {
+                svg.push_str(&format!(
+                    r#"<g data-node-index="{}" class="{}">
+"#,
+                    node_idx.index(),
+                    highlight_class(selection.nodes.contains(&node_idx.index()))
+                ));
+            }
             draw_shape(&mut svg, &symbol, cx, cy, NODE_R * s, opts);
 
             // sulfation / modification label above the shape
@@ -1259,6 +1457,9 @@ pub fn render_svg_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> Sn
                     lbl = label,
                 ));
             }
+            if highlights.is_some() {
+                svg.push_str("</g>\n");
+            }
         }
     }
 
@@ -1266,14 +1467,19 @@ pub fn render_svg_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> Sn
     Ok(svg)
 }
 
-fn render_composition_svg(graph: &ResidueGraph, opts: &RenderOptions) -> SnfgResult<String> {
-    let mut groups: Vec<(String, Symbol, String, bool, usize)> = Vec::new();
-    for residue in graph.inner().node_weights() {
+fn render_composition_svg(
+    graph: &ResidueGraph,
+    opts: &RenderOptions,
+    highlights: Option<&MotifSelection>,
+) -> SnfgResult<String> {
+    let mut groups: Vec<(String, Symbol, String, bool, Vec<usize>)> = Vec::new();
+    for node in graph.inner().node_indices() {
+        let residue = &graph.inner()[node];
         let key = format!("{residue:?}");
-        if let Some((_, _, _, _, count)) =
+        if let Some((_, _, _, _, nodes)) =
             groups.iter_mut().find(|(value, _, _, _, _)| *value == key)
         {
-            *count += 1;
+            nodes.push(node.index());
         } else {
             let symbol = symbol_for(residue)?;
             groups.push((
@@ -1281,7 +1487,7 @@ fn render_composition_svg(graph: &ResidueGraph, opts: &RenderOptions) -> SnfgRes
                 symbol.clone(),
                 build_modification_label(residue),
                 is_assigned_symbol(residue, &symbol),
-                1,
+                vec![node.index()],
             ));
         }
     }
@@ -1290,19 +1496,40 @@ fn render_composition_svg(graph: &ResidueGraph, opts: &RenderOptions) -> SnfgRes
     let spacing = 155.0 * scale;
     let width = (groups.len().max(1) as f64 * spacing) + 50.0 * scale;
     let height = 155.0 * scale;
+    let highlight_css = if highlights.is_some() {
+        MOTIF_DEEMPHASIS_CSS
+    } else {
+        ""
+    };
+    let metadata = svg_metadata(graph, opts);
     let mut svg = format!(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SNFG glycan composition" viewBox="0 0 {width} {height}" width="{width}" height="{height}">
-<style>
+        r#"<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="snfg-title snfg-desc" viewBox="0 0 {width} {height}" width="{width}" height="{height}">
+{metadata}<style>
   .res-label {{ font-family: {font}; font-size: 11px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
   .count {{ font-family: {font}; font-size: {count_size}px; font-weight: 600; fill: #000; text-anchor: middle; }}
-</style>
+{highlight_css}</style>
 "#,
         font = opts.font_family,
         count_size = 18.0 * scale,
+        highlight_css = highlight_css,
+        metadata = metadata,
     );
-    for (index, (_, symbol, modification, assigned, count)) in groups.iter().enumerate() {
+    for (index, (_, symbol, modification, assigned, nodes)) in groups.iter().enumerate() {
         let x = 75.0 * scale + index as f64 * spacing;
         let y = 62.0 * scale;
+        if let Some(selection) = highlights {
+            let selected = nodes.iter().any(|node| selection.nodes.contains(node));
+            let indices = nodes
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            svg.push_str(&format!(
+                r#"<g data-node-indices="{indices}" class="{}">
+"#,
+                highlight_class(selected)
+            ));
+        }
         draw_shape(&mut svg, symbol, x, y, NODE_R * scale, opts);
         if opts.show_labels || *assigned {
             let label = escape_xml_text(&symbol.label);
@@ -1322,8 +1549,12 @@ fn render_composition_svg(graph: &ResidueGraph, opts: &RenderOptions) -> SnfgRes
         svg.push_str(&format!(
             r#"<text x="{x}" y="{}" class="count">×{count}</text>
 "#,
-            y + 55.0 * scale
+            y + 55.0 * scale,
+            count = nodes.len()
         ));
+        if highlights.is_some() {
+            svg.push_str("</g>\n");
+        }
     }
     svg.push_str("</svg>\n");
     Ok(svg)
@@ -1351,11 +1582,7 @@ fn draw_linkage_text(
     let (ox, oy) = if len > 1.0 {
         let first = (-dy / len * 14.0 * scale, dx / len * 14.0 * scale);
         let second = (dy / len * 14.0 * scale, -dx / len * 14.0 * scale);
-        if first.1 < 0.0 {
-            first
-        } else {
-            second
-        }
+        if first.1 < 0.0 { first } else { second }
     } else {
         (0.0, -14.0 * scale)
     };
@@ -1383,16 +1610,98 @@ fn escape_xml_text(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-fn empty_svg() -> String {
-    concat!(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40" width="120" height="40">
-  <text x="10" y="25" font-family="sans-serif" font-size="11" fill=""#,
-        "#999",
-        r#"">(empty)</text>
+fn retained_source_notation(graph: &ResidueGraph) -> Option<SourceNotation> {
+    graph
+        .source_wurcs()
+        .map(|value| SourceNotation::new("wurcs", value))
+        .or_else(|| {
+            graph
+                .source_iupac()
+                .map(|value| SourceNotation::new("iupac-condensed", value))
+        })
+        .or_else(|| {
+            graph
+                .source_iupac_extended()
+                .map(|value| SourceNotation::new("iupac-extended", value))
+        })
+        .or_else(|| {
+            graph
+                .source_glycam()
+                .map(|value| SourceNotation::new("glycam", value))
+        })
+}
+
+fn svg_metadata(graph: &ResidueGraph, opts: &RenderOptions) -> String {
+    let iupac = crabwurcs_iupac::write_iupac_condensed_canonical(graph).ok();
+    let wurcs = crabwurcs_core::write_wurcs_canonical(graph).ok();
+    let source = opts
+        .source_notation
+        .clone()
+        .or_else(|| retained_source_notation(graph));
+
+    let title = iupac
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("SNFG glycan: {value}"))
+        .unwrap_or_else(|| "SNFG glycan".into());
+    let desc = match (iupac.as_deref(), wurcs.as_deref()) {
+        (Some(iupac), Some(wurcs)) => {
+            format!("Canonical IUPAC condensed: {iupac}. Canonical WURCS: {wurcs}.")
+        }
+        (Some(iupac), None) => {
+            format!("Canonical IUPAC condensed: {iupac}. Canonical WURCS is unavailable.")
+        }
+        (None, Some(wurcs)) => {
+            format!("Canonical IUPAC condensed is unavailable. Canonical WURCS: {wurcs}.")
+        }
+        (None, None) => "Canonical IUPAC condensed and canonical WURCS are unavailable.".into(),
+    };
+
+    let mut metadata = format!(
+        "<title id=\"snfg-title\">{}</title>\n\
+<desc id=\"snfg-desc\">{}</desc>\n\
+<metadata id=\"crabwurcs-notations\">\n\
+  <crabwurcs:notations xmlns:crabwurcs=\"https://github.com/Ojas-Singh/crabWURCS/ns/metadata/1\">\n",
+        escape_xml_text(&title),
+        escape_xml_text(&desc),
+    );
+    match iupac {
+        Some(value) => metadata.push_str(&format!(
+            "    <crabwurcs:iupac-condensed canonical=\"true\" available=\"true\">{}</crabwurcs:iupac-condensed>\n",
+            escape_xml_text(&value)
+        )),
+        None => metadata.push_str(
+            "    <crabwurcs:iupac-condensed canonical=\"true\" available=\"false\"/>\n",
+        ),
+    }
+    match wurcs {
+        Some(value) => metadata.push_str(&format!(
+            "    <crabwurcs:wurcs canonical=\"true\" available=\"true\">{}</crabwurcs:wurcs>\n",
+            escape_xml_text(&value)
+        )),
+        None => {
+            metadata.push_str("    <crabwurcs:wurcs canonical=\"true\" available=\"false\"/>\n")
+        }
+    }
+    if let Some(source) = source {
+        metadata.push_str(&format!(
+            "    <crabwurcs:source format=\"{}\">{}</crabwurcs:source>\n",
+            escape_xml_text(source.format.trim()),
+            escape_xml_text(source.value.trim())
+        ));
+    }
+    metadata.push_str("  </crabwurcs:notations>\n</metadata>\n");
+    metadata
+}
+
+fn empty_svg(graph: &ResidueGraph, opts: &RenderOptions) -> String {
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="snfg-title snfg-desc" viewBox="0 0 120 40" width="120" height="40">
+{}  <text x="10" y="25" font-family="sans-serif" font-size="11" fill="#999">(empty)</text>
 </svg>
-"#,
+"##,
+        svg_metadata(graph, opts)
     )
-    .to_string()
 }
 
 // ── Modification label ─────────────────────────────────────────────────────
@@ -1790,22 +2099,10 @@ mod tests {
             (ResidueKind::Glc, Shape::Circle, colour::BLUE),
             (ResidueKind::ManNAc, Shape::Square, colour::GREEN),
             (ResidueKind::GalN, Shape::NSquare, colour::YELLOW),
-            (
-                ResidueKind::IdoA,
-                Shape::SplitDiamondBottom,
-                colour::BROWN,
-            ),
+            (ResidueKind::IdoA, Shape::SplitDiamondBottom, colour::BROWN),
             (ResidueKind::Fuc, Shape::Triangle, colour::RED),
-            (
-                ResidueKind::QuiNAc,
-                Shape::DividedTriangle,
-                colour::BLUE,
-            ),
-            (
-                ResidueKind::Dig,
-                Shape::FlatRectangle,
-                colour::PURPLE,
-            ),
+            (ResidueKind::QuiNAc, Shape::DividedTriangle, colour::BLUE),
+            (ResidueKind::Dig, Shape::FlatRectangle, colour::PURPLE),
             (ResidueKind::Xyl, Shape::Star, colour::ORANGE),
             (ResidueKind::Neu5Gc, Shape::Diamond, colour::LIGHT_BLUE),
             (ResidueKind::Leg, Shape::FlatDiamond, colour::YELLOW),
@@ -1838,9 +2135,8 @@ mod tests {
     #[test]
     fn every_registered_symbol_can_be_rendered() {
         for &kind in ResidueKind::ALL {
-            let mut residue = crabwurcs_core::residue_from_kind(kind).unwrap_or_else(|_| {
-                crabwurcs_core::residue_from_kind(ResidueKind::Hex).unwrap()
-            });
+            let mut residue = crabwurcs_core::residue_from_kind(kind)
+                .unwrap_or_else(|_| crabwurcs_core::residue_from_kind(ResidueKind::Hex).unwrap());
             residue.residue_kind = Some(kind);
 
             let mut graph = ResidueGraph::new();
@@ -2047,9 +2343,97 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(svg.contains("aria-label=\"SNFG glycan composition\""));
+        assert!(svg.contains("aria-labelledby=\"snfg-title snfg-desc\""));
         assert_eq!(svg.matches("class=\"count\"").count(), 4);
         assert!(svg.contains("×6"));
         assert!(svg.contains("×5"));
+    }
+
+    #[test]
+    fn svg_metadata_contains_canonical_and_original_notations() {
+        let graph = crabwurcs_iupac::parse_iupac_condensed("Glucose").unwrap();
+        let svg = render_svg(&graph).unwrap();
+        assert!(svg.contains("<title id=\"snfg-title\">SNFG glycan: Glc</title>"));
+        assert!(svg.contains("<metadata id=\"crabwurcs-notations\">"));
+        assert!(svg.contains(
+            "<crabwurcs:iupac-condensed canonical=\"true\" available=\"true\">Glc</crabwurcs:iupac-condensed>"
+        ));
+        assert!(svg.contains("<crabwurcs:wurcs canonical=\"true\" available=\"true\">"));
+        assert!(
+            svg.contains("<crabwurcs:source format=\"iupac-condensed\">Glucose</crabwurcs:source>")
+        );
+        assert!(svg.contains("aria-labelledby=\"snfg-title snfg-desc\""));
+    }
+
+    #[test]
+    fn metadata_is_best_effort_and_escapes_source_text() {
+        let graph = crabwurcs_iupac::parse_iupac_condensed("Foo").unwrap();
+        let svg = render_svg_with_options(
+            &graph,
+            &RenderOptions {
+                source_notation: Some(SourceNotation::new("custom<&", "Foo<&")),
+                ..RenderOptions::default()
+            },
+        )
+        .unwrap();
+        assert!(svg.contains(
+            "<crabwurcs:iupac-condensed canonical=\"true\" available=\"true\">Foo</crabwurcs:iupac-condensed>"
+        ));
+        assert!(svg.contains("<crabwurcs:wurcs canonical=\"true\" available=\"false\"/>"));
+        assert!(svg.contains(
+            "<crabwurcs:source format=\"custom&lt;&amp;\">Foo&lt;&amp;</crabwurcs:source>"
+        ));
+    }
+
+    #[test]
+    fn png_is_transparent_rgba_at_twice_the_svg_dimensions() {
+        let graph = crabwurcs_iupac::parse_iupac_condensed("Glc").unwrap();
+        let png_bytes = render_png(&graph).unwrap();
+        assert_eq!(&png_bytes[..8], b"\x89PNG\r\n\x1a\n");
+
+        let decoder = png::Decoder::new(std::io::Cursor::new(&png_bytes));
+        let mut reader = decoder.read_info().unwrap();
+        let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut pixels).unwrap();
+        assert_eq!(info.width, 280);
+        assert_eq!(info.height, 280);
+        assert_eq!(info.color_type, png::ColorType::Rgba);
+        assert_eq!(
+            pixels[3], 0,
+            "top-left background pixel must be transparent"
+        );
+    }
+
+    #[test]
+    fn highlighted_png_uses_the_same_motif_rendering_path() {
+        let graph = crabwurcs_iupac::parse_iupac_condensed("Fuc(a1-3)GlcNAc(b1-4)GlcNAc").unwrap();
+        let motif = crabwurcs_iupac::parse_iupac_condensed("Fuc(a1-?)GlcNAc").unwrap();
+        let png = render_png_with_motifs(&graph, &[motif], &RenderOptions::default()).unwrap();
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    }
+
+    #[test]
+    fn dimmed_residue_stays_opaque_over_its_linkage() {
+        let graph = crabwurcs_iupac::parse_iupac_condensed("Man(b1-4)GlcNAc").unwrap();
+        let motif = crabwurcs_iupac::parse_iupac_condensed("GlcNAc").unwrap();
+        let png = render_png_with_motifs(&graph, &[motif], &RenderOptions::default()).unwrap();
+
+        let decoder = png::Decoder::new(std::io::Cursor::new(&png));
+        let mut reader = decoder.read_info().unwrap();
+        let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut pixels).unwrap();
+
+        // The linkage terminates at the centre of the dimmed Man symbol. Its
+        // muted green fill must fully occlude that line.
+        let x = 140usize;
+        let y = 140usize;
+        let offset = (y * info.width as usize + x) * 4;
+        let pixel = &pixels[offset..offset + 4];
+        assert_eq!(pixel[3], 255, "dimmed symbols must remain fully opaque");
+        assert_eq!(
+            pixel,
+            [0xCD, 0xE9, 0xDF, 0xFF],
+            "dimmed Man should use GlycoDraw's exact muted green"
+        );
     }
 }

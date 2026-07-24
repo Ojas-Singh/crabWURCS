@@ -1,4 +1,4 @@
-use crate::{parse_wurcs, CoreError, CoreResult, Modification, Monosaccharide};
+use crate::{CoreError, CoreResult, Modification, Monosaccharide, parse_wurcs};
 use std::sync::OnceLock;
 
 macro_rules! residue_kinds {
@@ -32,6 +32,41 @@ macro_rules! residue_kinds {
             pub const fn is_generic(self) -> bool {
                 match self {
                     $(Self::$variant => $generic),+
+                }
+            }
+
+            /// Return whether this registry kind, when used as a motif query,
+            /// accepts `candidate`.
+            ///
+            /// Concrete kinds match only themselves. Official SNFG generic
+            /// classes match themselves and every named residue in their row.
+            pub fn matches_family(self, candidate: Self) -> bool {
+                use ResidueKind::*;
+                match self {
+                    Hex => matches!(candidate, Hex | Glc | Man | Gal | Gul | Alt | All | Tal | Ido),
+                    HexNAc => matches!(
+                        candidate,
+                        HexNAc | GlcNAc | ManNAc | GalNAc | GulNAc | AltNAc | AllNAc | TalNAc | IdoNAc
+                    ),
+                    HexN => matches!(
+                        candidate,
+                        HexN | GlcN | ManN | GalN | GulN | AltN | AllN | TalN | IdoN
+                    ),
+                    HexA => matches!(
+                        candidate,
+                        HexA | GlcA | ManA | GalA | GulA | AltA | AllA | TalA | IdoA
+                    ),
+                    DHex => matches!(candidate, DHex | Qui | Rha | SixDGul | SixDAlt | SixDTal | Fuc),
+                    DHexNAc => matches!(
+                        candidate,
+                        DHexNAc | QuiNAc | RhaNAc | SixDAltNAc | SixDTalNAc | FucNAc
+                    ),
+                    DDHex => matches!(candidate, DDHex | Oli | Tyv | Abe | Par | Dig | Col),
+                    Pen => matches!(candidate, Pen | Ara | Lyx | Xyl | Rib),
+                    NulO => matches!(candidate, NulO | Kdn | Neu5Ac | Neu5Gc | Neu | Sia),
+                    Sia => matches!(candidate, Sia | Kdn | Neu5Ac | Neu5Gc | Neu),
+                    DDNulO => matches!(candidate, DDNulO | Pse | Leg | Aci | FourELeg),
+                    _ => self == candidate,
                 }
             }
 

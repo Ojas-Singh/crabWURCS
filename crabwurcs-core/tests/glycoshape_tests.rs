@@ -134,7 +134,9 @@ mod glycoshape_tests {
             assert!(
                 pass_rate >= 90.0,
                 "GLYCOSHAPE WURCS roundtrip pass rate {:.1}% is below 90% threshold. {} passed, {} failed.",
-                pass_rate, passed, fail_count
+                pass_rate,
+                passed,
+                fail_count
             );
         } else {
             println!(

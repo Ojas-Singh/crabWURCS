@@ -20,8 +20,8 @@ use std::sync::OnceLock;
 use chematic::core::{AtomIdx, Chirality, Molecule, STEREO_H_SENTINEL};
 use chematic::mol::MolMetadata;
 use crabwurcs_core::{
-    parse_wurcs, write_wurcs, AnomericSymbol, CarbonPosition, Linkage, Modification,
-    Monosaccharide, ResidueGraph, RingClosure,
+    AnomericSymbol, CarbonPosition, Linkage, Modification, Monosaccharide, ResidueGraph,
+    RingClosure, parse_wurcs, write_wurcs,
 };
 use thiserror::Error;
 
@@ -931,8 +931,8 @@ pub fn molecule_from_wurcs(graph: &ResidueGraph, format: ChemFormat) -> MolResul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petgraph::visit::EdgeRef;
     use petgraph::Direction;
+    use petgraph::visit::EdgeRef;
 
     const WURCS: &str = "WURCS=2.0/4,4,3/[u2112h_2*NCC/3=O][a2112h-1b_1-5][a2112h-1a_1-5][a1221m-1a_1-5]/1-2-3-4/a3-b1_b3-c1_c2-d1";
 
