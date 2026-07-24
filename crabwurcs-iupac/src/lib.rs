@@ -1,8 +1,9 @@
 #![allow(dead_code)] // Legacy differential-parser helpers are retained during the port.
 
 use crabwurcs_core::{
-    AnomericSymbol, CarbonPosition, Linkage, Modification, Monosaccharide, Probability,
-    RepeatCount, ResidueGraph, RingClosure, UndefinedLinkage, UndefinedParent,
+    classify_residue, residue_from_kind, AnomericSymbol, CarbonPosition, Linkage, Modification,
+    Monosaccharide, Probability, RepeatCount, ResidueGraph, ResidueKind, RingClosure,
+    UndefinedLinkage, UndefinedParent,
 };
 use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
@@ -15,6 +16,12 @@ pub enum IupacError {
 
     #[error("unsupported or unrecognized IUPAC token: {0}")]
     UnsupportedToken(String),
+
+    #[error("residue {residue} cannot be represented in {format} without losing information")]
+    UnrepresentableInFormat {
+        residue: String,
+        format: &'static str,
+    },
 }
 
 pub type IupacResult<T> = Result<T, IupacError>;
@@ -240,7 +247,7 @@ pub fn parse_iupac_condensed(input: &str) -> IupacResult<ResidueGraph> {
     // Some providers label GLYCAM's compact, parenthesis-free spelling as
     // "IUPAC". Accept it here as an interoperable condensed dialect.
     let glycam_link =
-        regex::Regex::new(r"[DL]?[A-Z][A-Za-z0-9]*(?:p|f)(?:\[[^]]+\])?[ab?][0-9?]+-")
+        regex::Regex::new(r"[DL]?[A-Z0-9][A-Za-z0-9]*(?:p|f)(?:\[[^]]+\])?[ab?][0-9?]+-")
             .expect("GLYCAM-like condensed regex");
     if !cleaned.contains('(') && glycam_link.is_match(&cleaned) {
         let mut graph = parse_glycam(&cleaned)?;
@@ -1396,6 +1403,40 @@ fn make_residue_from_name_with_anomeric(
     let is_d = name.starts_with("D-") || name.starts_with("d-");
     let is_l = name.starts_with("L-") || name.starts_with("l-");
 
+    let registry_match = (!base.starts_with("Hex2NAc4NAc6d"))
+        .then(|| registry_kind_prefix(&base))
+        .flatten();
+    if let Some((kind, matched_len)) = registry_match {
+        let mut residue = if kind.unique_residue().is_some() {
+            residue_from_kind(kind).expect("valid static residue registry entry")
+        } else {
+            let carrier = match kind {
+                ResidueKind::Sia => ResidueKind::NulO,
+                ResidueKind::Unknown | ResidueKind::Assigned => ResidueKind::Hex,
+                _ => unreachable!("only display-only registry entries omit WURCS"),
+            };
+            let mut residue =
+                residue_from_kind(carrier).expect("valid display carrier registry entry");
+            residue.residue_kind = Some(kind);
+            residue
+        };
+        apply_explicit_configuration(&mut residue, kind, is_d, is_l);
+        apply_ring_suffix(&mut residue, &base[..matched_len]);
+        if let Some(symbol) = anomeric_override {
+            residue.anomeric_symbol = symbol;
+            if residue.anomeric_prefix.starts_with('h') {
+                residue.anomeric_prefix = "ha".into();
+            } else if residue.anomeric_prefix.starts_with('A') {
+                residue.anomeric_prefix = "Aad".into();
+            } else {
+                residue.anomeric_prefix = "a".into();
+            }
+        }
+        let suffix = &base[matched_len..];
+        merge_extra_modifications(&mut residue, suffix);
+        return residue;
+    }
+
     let is_sialic_acid =
         base.starts_with("Neu") || base.starts_with("Sia") || base.starts_with("Kdn");
     let is_ulosonic_acid = is_sialic_acid || base.starts_with("Kdo") || base.starts_with("KDO");
@@ -1502,6 +1543,99 @@ fn make_residue_from_name_with_anomeric(
             anomeric_prefix(anomeric_symbol),
             vec![],
         )
+        .with_display_name(base)
+    }
+}
+
+fn registry_kind_prefix(name: &str) -> Option<(ResidueKind, usize)> {
+    let mut candidates = Vec::new();
+    for kind in ResidueKind::ALL {
+        candidates.push((*kind, kind.canonical_name()));
+        candidates.extend(kind.aliases().iter().map(|alias| (*kind, *alias)));
+    }
+    candidates.sort_by_key(|(_, candidate)| std::cmp::Reverse(candidate.len()));
+    candidates.into_iter().find_map(|(kind, candidate)| {
+        if name.len() < candidate.len()
+            || !name[..candidate.len()].eq_ignore_ascii_case(candidate)
+        {
+            return None;
+        }
+        let suffix = &name[candidate.len()..];
+        (suffix.is_empty()
+            || suffix.starts_with(|character: char| {
+                character.is_ascii_digit() || matches!(character, 'p' | 'f' | '[')
+            }))
+        .then_some((kind, candidate.len()))
+    })
+}
+
+fn default_is_l(kind: ResidueKind) -> bool {
+    matches!(
+        kind,
+        ResidueKind::Ara
+            | ResidueKind::Fuc
+            | ResidueKind::FucNAc
+            | ResidueKind::Ido
+            | ResidueKind::IdoA
+            | ResidueKind::IdoN
+            | ResidueKind::IdoNAc
+            | ResidueKind::Rha
+            | ResidueKind::RhaNAc
+            | ResidueKind::Alt
+            | ResidueKind::AltA
+            | ResidueKind::AltN
+            | ResidueKind::AltNAc
+            | ResidueKind::Sor
+            | ResidueKind::Api
+            | ResidueKind::Col
+    )
+}
+
+fn apply_explicit_configuration(
+    residue: &mut Monosaccharide,
+    kind: ResidueKind,
+    is_d: bool,
+    is_l: bool,
+) {
+    if kind.is_generic() || (!is_d && !is_l) || is_l == default_is_l(kind) {
+        return;
+    }
+    residue.skeleton_code = residue
+        .skeleton_code
+        .chars()
+        .map(|character| match character {
+            '1' => '2',
+            '2' => '1',
+            other => other,
+        })
+        .collect();
+    // The semantic hint describes the default SNFG identity. An explicitly
+    // inverted configuration must be classified from its chemistry.
+    residue.residue_kind = None;
+}
+
+fn apply_ring_suffix(residue: &mut Monosaccharide, matched_name: &str) {
+    if matched_name.ends_with('f') {
+        residue.ring = RingClosure::Furanose;
+        residue.ring_end = residue.ring_start.map(|start| start + 3);
+    } else if matched_name.ends_with('p') {
+        residue.ring = RingClosure::Pyranose;
+        residue.ring_end = residue.ring_start.map(|start| start + 4);
+    }
+}
+
+fn merge_extra_modifications(residue: &mut Monosaccharide, suffix: &str) {
+    if suffix.is_empty() {
+        return;
+    }
+    let extra = extract_name_modifications(&format!("X{suffix}"));
+    for modification in extra {
+        if !residue.modifications.iter().any(|existing| {
+            existing.position == modification.position
+                && existing.descriptor == modification.descriptor
+        }) {
+            residue.modifications.push(modification);
+        }
     }
 }
 
@@ -1930,7 +2064,10 @@ fn serialize_iupac_subtree(
         let subtree = serialize_iupac_subtree(inner, child, visited, labels);
         let anomer = inner
             .node_weight(child)
-            .map(|residue| residue.anomeric_symbol.to_char())
+            .map(|residue| match residue.anomeric_symbol {
+                AnomericSymbol::Unknown => '?',
+                symbol => symbol.to_char(),
+            })
             .unwrap_or('x');
         let child_positions = linkage
             .child_positions()
@@ -1993,6 +2130,9 @@ fn display_position(position: CarbonPosition) -> String {
 }
 
 fn residue_to_iupac_name(residue: &Monosaccharide) -> String {
+    if let Some(name) = residue.display_name.as_deref() {
+        return name.to_string();
+    }
     let skeleton = &residue.skeleton_code;
     let bare = skeleton
         .strip_suffix(['h', 'm', 'x', 'a', 'd'])
@@ -2023,7 +2163,8 @@ fn residue_to_iupac_name(residue: &Monosaccharide) -> String {
         .iter()
         .any(|modification| modification.descriptor.contains("NCC"));
 
-    let mut name = match bare {
+    let registry_name = classify_residue(residue).map(|kind| kind.canonical_name().to_string());
+    let mut name = registry_name.unwrap_or_else(|| match bare {
         "21122" if is_sialic && has_ngc => "Neu5Gc".to_string(),
         "21122" if is_sialic && has_nac => "Neu5Ac".to_string(),
         "21122" if is_sialic => "Kdn".to_string(),
@@ -2091,7 +2232,7 @@ fn residue_to_iupac_name(residue: &Monosaccharide) -> String {
         _ if bare.contains('d') && bare.len() <= 5 => "Fuc".to_string(),
         _ if bare.contains("d21122") => "Neu5Ac".to_string(),
         _ => format!("Res{}", bare.len()),
-    };
+    });
 
     for modification in &residue.modifications {
         let already_in_base = (modification.descriptor.contains("NC")
@@ -2158,7 +2299,7 @@ pub fn parse_iupac_extended(input: &str) -> IupacResult<ResidueGraph> {
         return Ok(graph);
     }
     let repeat_boundary = regex::Regex::new(
-        r"(?P<anom>[αβ?])-?(?P<stereo>[DL])-(?P<name>[A-Za-z0-9,]+)-\((?P<donor>[0-9?/]+)(?:→|->)](?P<count>[nN0-9?-]+)$",
+        r"(?P<anom>[αβ?])-(?:(?P<stereo>[DL])-)?(?P<name>[A-Za-z0-9,]+)-\((?P<donor>[0-9?/]+)(?:→|->)](?P<count>[nN0-9?-]+)$",
     )
     .expect("extended repeat boundary regex");
     cleaned = repeat_boundary
@@ -2168,9 +2309,13 @@ pub fn parse_iupac_extended(input: &str) -> IupacResult<ResidueGraph> {
                 "β" => "b",
                 _ => "?",
             };
+            let stereo = caps
+                .name("stereo")
+                .map(|value| format!("{}-", value.as_str()))
+                .unwrap_or_default();
             format!(
-                "{}-{}({}{}-]{}",
-                &caps["stereo"],
+                "{}{}({}{}-]{}",
+                stereo,
                 normalize_extended_residue(&caps["name"]),
                 anomer,
                 &caps["donor"],
@@ -2179,7 +2324,7 @@ pub fn parse_iupac_extended(input: &str) -> IupacResult<ResidueGraph> {
         })
         .to_string();
     let cyclic_boundary = regex::Regex::new(
-        r"(?P<anom>[αβ?])-?(?P<stereo>[DL])-(?P<name>[A-Za-z0-9,]+)-\((?P<donor>[0-9?/]+)(?:→|->)$",
+        r"(?P<anom>[αβ?])-(?:(?P<stereo>[DL])-)?(?P<name>[A-Za-z0-9,]+)-\((?P<donor>[0-9?/]+)(?:→|->)$",
     )
     .expect("extended cyclic boundary regex");
     cleaned = cyclic_boundary
@@ -2189,9 +2334,13 @@ pub fn parse_iupac_extended(input: &str) -> IupacResult<ResidueGraph> {
                 "β" => "b",
                 _ => "?",
             };
+            let stereo = caps
+                .name("stereo")
+                .map(|value| format!("{}-", value.as_str()))
+                .unwrap_or_default();
             format!(
-                "{}-{}({}{}-",
-                &caps["stereo"],
+                "{}{}({}{}-",
+                stereo,
                 normalize_extended_residue(&caps["name"]),
                 anomer,
                 &caps["donor"]
@@ -2204,7 +2353,7 @@ pub fn parse_iupac_extended(input: &str) -> IupacResult<ResidueGraph> {
         .replace(&cleaned, "$open$position)")
         .to_string();
     let bridge_linkage = regex::Regex::new(
-        r"(?P<anom>[αβ?])-?(?P<stereo>[DL])-(?P<name>[^\[\]]+?)-\((?P<donor>[0-9?]+)-(?P<bridge>[0-9?]*(?:Anhydro|\(S\)Py|\(R\)Py|PPEtn|PEtn|PyrP|Tri-P|Suc|NS|SH|Py|P|S|N)[0-9?]*)→(?P<acceptor>[0-9?/]+)\)-?",
+        r"(?P<anom>[αβ?])-(?:(?P<stereo>[DL])-)?(?P<name>[^\[\]]+?)-\((?P<donor>[0-9?]+)-(?P<bridge>[0-9?]*(?:Anhydro|\(S\)Py|\(R\)Py|PPEtn|PEtn|PyrP|Tri-P|Suc|NS|SH|Py|P|S|N)[0-9?]*)→(?P<acceptor>[0-9?/]+)\)-?",
     ).expect("extended bridge regex");
     cleaned = bridge_linkage
         .replace_all(&cleaned, |caps: &regex::Captures<'_>| {
@@ -2213,9 +2362,13 @@ pub fn parse_iupac_extended(input: &str) -> IupacResult<ResidueGraph> {
                 "β" => "b",
                 _ => "?",
             };
+            let stereo = caps
+                .name("stereo")
+                .map(|value| format!("{}-", value.as_str()))
+                .unwrap_or_default();
             format!(
-                "{}-{}({}{}-{}-{})",
-                &caps["stereo"],
+                "{}{}({}{}-{}-{})",
+                stereo,
                 normalize_extended_residue(&caps["name"]),
                 anomer,
                 &caps["donor"],
@@ -2225,7 +2378,7 @@ pub fn parse_iupac_extended(input: &str) -> IupacResult<ResidueGraph> {
         })
         .to_string();
     let residue_linkage = regex::Regex::new(
-        r"(?P<anom>[αβ?])-?(?P<stereo>[DL])-(?P<name>[^\[\]]+?)-\((?P<donor>[0-9?]+)(?:→|->|-)(?P<acceptor>(?:[?0-9.,]+%)?[0-9?/]+)\)-?",
+        r"(?P<anom>[αβ?])-(?:(?P<stereo>[DL])-)?(?P<name>[^\[\]]+?)-\((?P<donor>[0-9?]+)(?:→|->|-)(?P<acceptor>(?:[?0-9.,]+%)?[0-9?/]+)\)-?",
     ).expect("extended IUPAC regex");
     let condensed = residue_linkage
         .replace_all(&cleaned, |caps: &regex::Captures<'_>| {
@@ -2235,21 +2388,26 @@ pub fn parse_iupac_extended(input: &str) -> IupacResult<ResidueGraph> {
                 _ => "?",
             };
             let name = normalize_extended_residue(&caps["name"]);
+            let stereo = caps
+                .name("stereo")
+                .map(|value| format!("{}-", value.as_str()))
+                .unwrap_or_default();
             format!(
-                "{}-{}({}{}-{})",
-                &caps["stereo"], name, anomer, &caps["donor"], &caps["acceptor"]
+                "{}{}({}{}-{})",
+                stereo, name, anomer, &caps["donor"], &caps["acceptor"]
             )
         })
         .replace("]-", "]")
         .replace("-[", "[");
-    let root_re = regex::Regex::new(r"(?P<stereo>[DL])-(?P<name>[A-Za-z0-9,]+)$")
+    let root_re =
+        regex::Regex::new(r"(?:(?P<stereo>[DL])-)?(?P<name>[A-Za-z0-9,]+)$")
         .expect("extended root regex");
     let condensed = root_re.replace(&condensed, |caps: &regex::Captures<'_>| {
-        format!(
-            "{}-{}",
-            &caps["stereo"],
-            normalize_extended_residue(&caps["name"])
-        )
+        let stereo = caps
+            .name("stereo")
+            .map(|value| format!("{}-", value.as_str()))
+            .unwrap_or_default();
+        format!("{}{}", stereo, normalize_extended_residue(&caps["name"]))
     });
     let mut graph = parse_iupac_condensed(&condensed)?;
     graph.set_source_iupac_extended(input.trim().to_string());
@@ -2263,27 +2421,24 @@ pub fn write_iupac_extended(graph: &ResidueGraph) -> IupacResult<String> {
     if graph.is_composition() {
         return Ok(write_composition_with(graph, |residue| {
             let condensed = residue_to_iupac_name(residue);
-            let (stereo, name) = residue_stereo_and_name(&condensed);
-            format!("{}-{}", stereo, extended_residue_name(name))
+            extended_name_with_stereo(&condensed)
         }));
     }
     let condensed = write_iupac_condensed(graph)?;
     let bridge_linked = regex::Regex::new(
-        r"(?P<name>(?:[DL]-)?[A-Za-z][A-Za-z0-9,-]*)\((?P<anom>[abx?])(?P<donor>[0-9?/]+)-(?P<bridge>[0-9?]*(?:Anhydro|\(S\)Py|\(R\)Py|PPEtn|PEtn|PyrP|Tri-P|Suc|NS|SH|Py|P|S|N)[0-9?]*)-(?P<acceptor>[0-9?/]+)\)",
+        r"(?P<name>(?:[DL]-)?[A-Za-z0-9][A-Za-z0-9,-]*)\((?P<anom>[abx?])(?P<donor>[0-9?/]+)-(?P<bridge>[0-9?]*(?:Anhydro|\(S\)Py|\(R\)Py|PPEtn|PEtn|PyrP|Tri-P|Suc|NS|SH|Py|P|S|N)[0-9?]*)-(?P<acceptor>[0-9?/]+)\)",
     ).expect("condensed bridge regex");
     let condensed = bridge_linked
         .replace_all(&condensed, |caps: &regex::Captures<'_>| {
-            let (stereo, name) = residue_stereo_and_name(&caps["name"]);
             let greek = match &caps["anom"] {
                 "a" => "α",
                 "b" => "β",
                 _ => "?",
             };
             format!(
-                "{}-{}-{}-({}-{}→{})-",
+                "{}-{}-({}-{}→{})-",
                 greek,
-                stereo,
-                extended_residue_name(name),
+                extended_name_with_stereo(&caps["name"]),
                 &caps["donor"],
                 &caps["bridge"],
                 &caps["acceptor"]
@@ -2291,21 +2446,19 @@ pub fn write_iupac_extended(graph: &ResidueGraph) -> IupacResult<String> {
         })
         .to_string();
     let linked = regex::Regex::new(
-        r"(?P<name>(?:[DL]-)?[A-Za-z][A-Za-z0-9,-]*)\((?P<anom>[abx?])(?P<donor>[0-9?/]+)-(?P<acceptor>(?:[?0-9.,]+%)?[0-9?/]+)\)",
+        r"(?P<name>(?:[DL]-)?[A-Za-z0-9][A-Za-z0-9,-]*)\((?P<anom>[abx?])(?P<donor>[0-9?/]+)-(?P<acceptor>(?:[?0-9.,]+%)?[0-9?/]+)\)",
     ).expect("condensed IUPAC regex");
     let mut extended = linked
         .replace_all(&condensed, |caps: &regex::Captures<'_>| {
-            let (stereo, name) = residue_stereo_and_name(&caps["name"]);
             let greek = match &caps["anom"] {
                 "a" => "α",
                 "b" => "β",
                 _ => "?",
             };
             format!(
-                "{}-{}-{}-( {}→{} )-",
+                "{}-{}-( {}→{} )-",
                 greek,
-                stereo,
-                extended_residue_name(name),
+                extended_name_with_stereo(&caps["name"]),
                 &caps["donor"],
                 &caps["acceptor"]
             )
@@ -2313,44 +2466,40 @@ pub fn write_iupac_extended(graph: &ResidueGraph) -> IupacResult<String> {
         })
         .to_string();
     let repeat_root = regex::Regex::new(
-        r"(?P<name>(?:[DL]-)?[A-Za-z][A-Za-z0-9,-]*)\((?P<anom>[abx?])(?P<donor>[0-9?/]+)-](?P<count>[nN0-9?-]+)$",
+        r"(?P<name>(?:[DL]-)?[A-Za-z0-9][A-Za-z0-9,-]*)\((?P<anom>[abx?])(?P<donor>[0-9?/]+)-](?P<count>[nN0-9?-]+)$",
     )
     .expect("condensed repeat root regex");
     extended = repeat_root
         .replace(&extended, |caps: &regex::Captures<'_>| {
-            let (stereo, name) = residue_stereo_and_name(&caps["name"]);
             let greek = match &caps["anom"] {
                 "a" => "α",
                 "b" => "β",
                 _ => "?",
             };
             format!(
-                "{}-{}-{}-({}→]{}",
+                "{}-{}-({}→]{}",
                 greek,
-                stereo,
-                extended_residue_name(name),
+                extended_name_with_stereo(&caps["name"]),
                 &caps["donor"],
                 &caps["count"]
             )
         })
         .to_string();
     let cyclic_root = regex::Regex::new(
-        r"(?P<name>(?:[DL]-)?[A-Za-z][A-Za-z0-9,-]*)\((?P<anom>[abx?])(?P<donor>[0-9?/]+)-$",
+        r"(?P<name>(?:[DL]-)?[A-Za-z0-9][A-Za-z0-9,-]*)\((?P<anom>[abx?])(?P<donor>[0-9?/]+)-$",
     )
     .expect("condensed cyclic root regex");
     extended = cyclic_root
         .replace(&extended, |caps: &regex::Captures<'_>| {
-            let (stereo, name) = residue_stereo_and_name(&caps["name"]);
             let greek = match &caps["anom"] {
                 "a" => "α",
                 "b" => "β",
                 _ => "?",
             };
             format!(
-                "{}-{}-{}-({}→",
+                "{}-{}-({}→",
                 greek,
-                stereo,
-                extended_residue_name(name),
+                extended_name_with_stereo(&caps["name"]),
                 &caps["donor"]
             )
         })
@@ -2363,12 +2512,11 @@ pub fn write_iupac_extended(graph: &ResidueGraph) -> IupacResult<String> {
     extended = extended.replace("-[", "[");
 
     // The reducing-end residue has no anomer/linkage in condensed notation.
-    let root = regex::Regex::new(r"(?P<name>(?:[DL]-)?[A-Za-z][A-Za-z0-9,-]*)$")
+    let root = regex::Regex::new(r"(?P<name>(?:[DL]-)?[A-Za-z0-9][A-Za-z0-9,-]*)$")
         .expect("condensed root regex");
     extended = root
         .replace(&extended, |caps: &regex::Captures<'_>| {
-            let (stereo, name) = residue_stereo_and_name(&caps["name"]);
-            format!("{}-{}", stereo, extended_residue_name(name))
+            extended_name_with_stereo(&caps["name"])
         })
         .to_string();
     Ok(extended)
@@ -2402,14 +2550,23 @@ fn residue_stereo_and_name(name: &str) -> (&str, &str) {
         ("D", rest)
     } else if let Some(rest) = name.strip_prefix("L-") {
         ("L", rest)
-    } else if name.starts_with("Fuc") || name.starts_with("Rha") {
-        ("L", name)
+    } else if let Some((kind, _)) = registry_kind_prefix(name) {
+        if kind.is_generic() {
+            ("", name)
+        } else if default_is_l(kind) {
+            ("L", name)
+        } else {
+            ("D", name)
+        }
     } else {
-        ("D", name)
+        ("", name)
     }
 }
 
 fn extended_residue_name(name: &str) -> String {
+    if registry_kind_prefix(name).is_some_and(|(kind, _)| kind.is_generic()) {
+        return name.to_string();
+    }
     if let Some(rest) = name.strip_prefix("Neu") {
         return format!("Neup{}", rest);
     }
@@ -2429,6 +2586,19 @@ fn extended_residue_name(name: &str) -> String {
         name.to_string()
     } else {
         format!("{}p", name)
+    }
+}
+
+fn extended_name_with_stereo(name: &str) -> String {
+    if registry_kind_prefix(name).is_none() {
+        return name.to_string();
+    }
+    let (stereo, name) = residue_stereo_and_name(name);
+    let extended = extended_residue_name(name);
+    if stereo.is_empty() {
+        extended
+    } else {
+        format!("{stereo}-{extended}")
     }
 }
 
@@ -2500,7 +2670,7 @@ pub fn parse_glycam(input: &str) -> IupacResult<ResidueGraph> {
         _ => cleaned.as_str(),
     };
     let bridge_linked = regex::Regex::new(
-        r"(?P<name>[DL]?[A-Z][A-Za-z0-9-]*?(?:\[[0-9A-Za-z,]+\])?)(?P<anom>[ab?])(?P<donor>[0-9?]+)-(?P<bridge>[0-9?]*(?:Anhydro|\(S\)Py|\(R\)Py|PPEtn|PEtn|PyrP|Tri-P|Suc|NS|SH|Py|P|S|N)[0-9?]*)-(?P<acceptor>[0-9?/]+)",
+        r"(?P<name>[DL]?[A-Z0-9][A-Za-z0-9-]*?(?:\[[0-9A-Za-z,]+\])?)(?P<anom>[ab?])(?P<donor>[0-9?]+)-(?P<bridge>[0-9?]*(?:Anhydro|\(S\)Py|\(R\)Py|PPEtn|PEtn|PyrP|Tri-P|Suc|NS|SH|Py|P|S|N)[0-9?]*)-(?P<acceptor>[0-9?/]+)",
     ).expect("GLYCAM bridge linkage regex");
     let cleaned = bridge_linked
         .replace_all(cleaned, |caps: &regex::Captures<'_>| {
@@ -2515,7 +2685,7 @@ pub fn parse_glycam(input: &str) -> IupacResult<ResidueGraph> {
         })
         .to_string();
     let linked = regex::Regex::new(
-        r"(?P<name>[DL]?[A-Z][A-Za-z0-9-]*?(?:\[[0-9A-Za-z,]+\])?)(?P<anom>[ab?])(?P<donor>[0-9?]+)-(?P<acceptor>[0-9?/]+)",
+        r"(?P<name>[DL]?[A-Z0-9][A-Za-z0-9-]*?(?:\[[0-9A-Za-z,]+\])?)(?P<anom>[ab?])(?P<donor>[0-9?]+)-(?P<acceptor>[0-9?/]+)",
     ).expect("GLYCAM linkage regex");
     let mut condensed = linked
         .replace_all(&cleaned, |caps: &regex::Captures<'_>| {
@@ -2528,7 +2698,7 @@ pub fn parse_glycam(input: &str) -> IupacResult<ResidueGraph> {
             )
         })
         .to_string();
-    let root = regex::Regex::new(r"(?P<name>[DL]?[A-Z][A-Za-z0-9-]*(?:\[[0-9A-Za-z,]+\])?)$")
+    let root = regex::Regex::new(r"(?P<name>[DL]?[A-Z0-9][A-Za-z0-9-]*(?:\[[0-9A-Za-z,]+\])?)$")
         .expect("GLYCAM root regex");
     condensed = root
         .replace(&condensed, |caps: &regex::Captures<'_>| {
@@ -2563,6 +2733,28 @@ fn known_accession_wurcs(value: &str) -> Option<&'static str> {
 }
 
 pub fn write_glycam(graph: &ResidueGraph) -> IupacResult<String> {
+    let unrepresentable = graph
+        .inner()
+        .node_weights()
+        .find(|residue| residue.display_name.is_some())
+        .or_else(|| {
+            graph.inner().node_weights().find(|residue| {
+                classify_residue(residue).is_some_and(ResidueKind::is_generic)
+            })
+        });
+    if let Some(residue) = unrepresentable {
+        let name = residue
+            .display_name
+            .clone()
+            .or_else(|| {
+                classify_residue(residue).map(|kind| kind.canonical_name().to_string())
+            })
+            .unwrap_or_else(|| "unknown".into());
+        return Err(IupacError::UnrepresentableInFormat {
+            residue: name,
+            format: "GLYCAM",
+        });
+    }
     if let Some(source) = graph.source_glycam() {
         return Ok(source.to_string());
     }
@@ -2573,12 +2765,12 @@ pub fn write_glycam(graph: &ResidueGraph) -> IupacResult<String> {
     }
     let condensed = write_iupac_condensed(graph)?;
     let bridge_linked = regex::Regex::new(
-        r"(?P<name>(?:[DL]-)?[A-Za-z][A-Za-z0-9,-]*)\((?P<anom>[abx?])(?P<donor>[0-9?/]+)-(?P<bridge>[0-9?]*(?:Anhydro|\(S\)Py|\(R\)Py|PPEtn|PEtn|PyrP|Tri-P|Suc|NS|SH|Py|P|S|N)[0-9?]*)-(?P<acceptor>[0-9?/]+)\)",
+        r"(?P<name>(?:[DL]-)?[A-Za-z0-9][A-Za-z0-9,-]*)\((?P<anom>[abx?])(?P<donor>[0-9?/]+)-(?P<bridge>[0-9?]*(?:Anhydro|\(S\)Py|\(R\)Py|PPEtn|PEtn|PyrP|Tri-P|Suc|NS|SH|Py|P|S|N)[0-9?]*)-(?P<acceptor>[0-9?/]+)\)",
     ).expect("condensed bridge to GLYCAM regex");
     let linked = regex::Regex::new(
-        r"(?P<name>(?:[DL]-)?[A-Za-z][A-Za-z0-9,-]*)\((?P<anom>[abx?])(?P<donor>[0-9?/]+)-(?P<acceptor>[0-9?/]+)\)",
+        r"(?P<name>(?:[DL]-)?[A-Za-z0-9][A-Za-z0-9,-]*)\((?P<anom>[abx?])(?P<donor>[0-9?/]+)-(?P<acceptor>[0-9?/]+)\)",
     ).expect("condensed to GLYCAM regex");
-    let root = regex::Regex::new(r"(?P<name>(?:[DL]-)?[A-Za-z][A-Za-z0-9,-]*)$")
+    let root = regex::Regex::new(r"(?P<name>(?:[DL]-)?[A-Za-z0-9][A-Za-z0-9,-]*)$")
         .expect("condensed GLYCAM root regex");
     let with_root = root
         .replace(&condensed, |caps: &regex::Captures<'_>| {
@@ -3036,5 +3228,118 @@ mod tests {
 
         let expected = "WURCS=2.0/4,4,3/[u2112h_2*NCC/3=O][a2112h-1b_1-5][a2112h-1a_1-5][a1221m-1a_1-5]/1-2-3-4/a3-b1_b3-c1_c2-d1";
         println!("Expected WURCS: {}", expected);
+    }
+
+    #[test]
+    fn every_snfg_registry_residue_roundtrips_text_notations() {
+        for kind in ResidueKind::ALL {
+            let Some(_) = kind.unique_residue() else {
+                continue;
+            };
+            let name = kind.canonical_name();
+            let graph = parse_iupac_condensed(name).unwrap_or_else(|error| {
+                panic!("failed to parse {name} ({kind:?}): {error}")
+            });
+            let wurcs = crabwurcs_core::write_wurcs(&graph).unwrap();
+            let reparsed = crabwurcs_core::parse_wurcs(&wurcs).unwrap();
+            assert_eq!(
+                write_iupac_condensed(&reparsed).unwrap(),
+                name,
+                "{kind:?}: {wurcs}"
+            );
+
+            let extended = write_iupac_extended(&graph).unwrap();
+            let extended_graph = parse_iupac_extended(&extended).unwrap();
+            assert_eq!(
+                write_iupac_condensed(&extended_graph).unwrap(),
+                name,
+                "{kind:?}: {extended}"
+            );
+
+            if !kind.is_generic() {
+                let glycam = write_glycam(&graph).unwrap();
+                let glycam_graph = parse_glycam(&glycam).unwrap();
+                assert_eq!(
+                    write_iupac_condensed(&glycam_graph).unwrap(),
+                    name,
+                    "{kind:?}: {glycam}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn generic_nodes_work_in_chains_and_compositions() {
+        let linked = "HexNAc(?1-?)Hex";
+        let graph = parse_iupac_condensed(linked).unwrap();
+        let wurcs = crabwurcs_core::write_wurcs(&graph).unwrap();
+        let reparsed = crabwurcs_core::parse_wurcs(&wurcs).unwrap();
+        assert_eq!(write_iupac_condensed(&reparsed).unwrap(), linked);
+        let extended = write_iupac_extended(&graph).unwrap();
+        assert_eq!(extended, "?-HexNAc-(1→?)-Hex");
+        assert_eq!(
+            write_iupac_condensed(&parse_iupac_extended(&extended).unwrap()).unwrap(),
+            linked
+        );
+        assert!(matches!(
+            write_glycam(&graph),
+            Err(IupacError::UnrepresentableInFormat {
+                residue,
+                format: "GLYCAM"
+            }) if residue == "Hex"
+        ));
+
+        let composition = "{Hex}3,{HexNAc}2,{dHex}1";
+        let graph = parse_iupac_condensed(composition).unwrap();
+        assert!(graph.is_composition());
+        let wurcs = crabwurcs_core::write_wurcs(&graph).unwrap();
+        let reparsed = crabwurcs_core::parse_wurcs(&wurcs).unwrap();
+        assert_eq!(
+            write_iupac_condensed(&reparsed).unwrap(),
+            composition
+        );
+    }
+
+    #[test]
+    fn arbitrary_names_draw_but_do_not_serialize_lossily() {
+        let graph = parse_iupac_condensed("Foo(?1-?)Hex").unwrap();
+        let foo = graph
+            .inner()
+            .node_weights()
+            .find(|residue| residue.display_name.as_deref() == Some("Foo"))
+            .unwrap();
+        assert_eq!(foo.residue_kind, None);
+        assert!(matches!(
+            crabwurcs_core::write_wurcs(&graph),
+            Err(crabwurcs_core::CoreError::UnrepresentableResidue(name)) if name == "Foo"
+        ));
+        assert!(matches!(
+            write_glycam(&graph),
+            Err(IupacError::UnrepresentableInFormat { residue, .. }) if residue == "Foo"
+        ));
+        let extended = write_iupac_extended(&graph).unwrap();
+        assert_eq!(extended, "?-Foo-(1→?)-Hex");
+        assert_eq!(
+            write_iupac_condensed(&parse_iupac_extended(&extended).unwrap()).unwrap(),
+            "Foo(?1-?)Hex"
+        );
+    }
+
+    #[test]
+    fn display_only_snfg_categories_are_not_guessed_as_wurcs_or_glycam() {
+        for name in ["Sia", "Unknown", "Assigned"] {
+            let graph = parse_iupac_condensed(name).unwrap();
+            assert_eq!(write_iupac_condensed(&graph).unwrap(), name);
+            assert!(matches!(
+                crabwurcs_core::write_wurcs(&graph),
+                Err(crabwurcs_core::CoreError::UnrepresentableResidue(residue))
+                    if residue == name
+            ));
+            assert!(matches!(
+                write_glycam(&graph),
+                Err(IupacError::UnrepresentableInFormat { residue, .. })
+                    if residue == name
+            ));
+        }
     }
 }

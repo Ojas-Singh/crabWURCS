@@ -59,7 +59,16 @@ crabwurcs pdb-to-wurcs --to iupac-condensed glycan.pdb
 
 # Handle compositions and complex structures
 crabwurcs convert --to wurcs '{GlcNAc}2,{Man}3,{Fuc}1'
+
+# Generic SNFG classes work in linked structures and compositions
+crabwurcs render 'HexNAc(?1-?)Hex'
+crabwurcs render '{Hex}3,{HexNAc}2,{dHex}1'
 ```
+
+The renderer implements the complete SNFG 2.0.4 symbol table and official
+RGB palette. Generic classes preserve their unspecified chemistry in IUPAC
+and WURCS. Exporting a generic class to GLYCAM returns an error because GLYCAM
+would require assigning stereochemistry that is not present in the input.
 
 ## Architecture
 

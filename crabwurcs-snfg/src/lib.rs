@@ -1,4 +1,4 @@
-use crabwurcs_core::{Monosaccharide, ResidueGraph};
+use crabwurcs_core::{classify_residue, Monosaccharide, ResidueGraph, ResidueKind};
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
@@ -30,45 +30,60 @@ pub enum Shape {
     Square,
     NSquare,
     Triangle,
+    DividedTriangle,
     Diamond,
+    FlatDiamond,
     SplitDiamondTop,    // uronic acid – top half coloured
     SplitDiamondBottom, // uronic acid – bottom half coloured (IdoA)
+    FlatRectangle,
     Star,
     Hexagon,
+    FlatHexagon,
     Pentagon,
 }
 
 // ── SNFG colours (glycoshape.io / standard SNFG palette) ───────────────────
 
 pub mod colour {
-    pub const GLC: &str = "#0385AE"; // dark blue – Glc, GlcNAc
-    pub const GAL: &str = "#FCC326"; // golden yellow – Gal, GalNAc
-    pub const MAN: &str = "#058F60"; // dark green – Man, ManNAc
-    pub const FUC: &str = "#C23537"; // dark red – Fuc
-    pub const RHA: &str = "#058F60"; // dark green – Rha (GlycoShape uses same color as Man)
-    pub const NEU5AC: &str = "#A15989"; // GlycoShape mauve – Neu5Ac
-    pub const NEU5GC: &str = "#91D3E3"; // GlycoShape light blue – Neu5Gc
-    pub const KDN: &str = "#5995B3"; // slate blue – KDN
-    pub const IDOA: &str = "#9F6D55"; // tan/brown – IdoA
-    pub const KDO: &str = "#FCC326"; // yellow – KDO
-    pub const XYL: &str = "#F47920"; // orange – Xyl (RGB 244, 121, 32)
-    pub const GUL: &str = "#EF6130"; // orange – Gul (GlycoShape palette)
-    pub const ALT: &str = "#F69EA1"; // pink – Alt (official SNFG RGB)
-    pub const ALL: &str = "#A54399"; // purple – All (SNFG RGB palette)
-    pub const TAL: &str = "#91D3E3"; // light blue – Tal (GlycoShape palette)
-    pub const IDO: &str = "#A17A4D"; // brown – Ido (official SNFG RGB)
-    pub const UNKNOWN: &str = "#999999";
+    pub const WHITE: &str = "#FFFFFF";
+    pub const BLUE: &str = "#0072BC";
+    pub const GREEN: &str = "#00A651";
+    pub const YELLOW: &str = "#FFD400";
+    pub const ORANGE: &str = "#F47920";
+    pub const PINK: &str = "#F69EA1";
+    pub const PURPLE: &str = "#A54399";
+    pub const LIGHT_BLUE: &str = "#8FCCE9";
+    pub const BROWN: &str = "#A17A4D";
+    pub const RED: &str = "#ED1C24";
+
+    pub const GLC: &str = BLUE;
+    pub const GAL: &str = YELLOW;
+    pub const MAN: &str = GREEN;
+    pub const FUC: &str = RED;
+    pub const RHA: &str = GREEN;
+    pub const NEU5AC: &str = PURPLE;
+    pub const NEU5GC: &str = LIGHT_BLUE;
+    pub const KDN: &str = GREEN;
+    pub const IDOA: &str = BROWN;
+    pub const KDO: &str = YELLOW;
+    pub const XYL: &str = ORANGE;
+    pub const GUL: &str = ORANGE;
+    pub const ALT: &str = PINK;
+    pub const ALL: &str = PURPLE;
+    pub const TAL: &str = LIGHT_BLUE;
+    pub const IDO: &str = BROWN;
+    pub const UNKNOWN: &str = WHITE;
 
     pub const STROKE: &str = "#000000";
     pub const BOND: &str = "#000000";
     pub const LINKAGE_TEXT: &str = "#000000";
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Symbol {
     pub shape: Shape,
     pub fill: &'static str,
-    pub label: &'static str,
+    pub label: String,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -91,7 +106,7 @@ fn hexose_family_symbol(
                 Shape::SplitDiamondTop
             },
             fill,
-            label: acid,
+            label: acid.into(),
         };
     }
     if has_n_mod {
@@ -102,19 +117,135 @@ fn hexose_family_symbol(
                 Shape::NSquare
             },
             fill,
-            label: if has_nac { nac } else { amine },
+            label: if has_nac { nac } else { amine }.into(),
         };
     }
     Symbol {
         shape: Shape::Circle,
         fill,
-        label: neutral,
+        label: neutral.into(),
     }
+}
+
+fn registered_symbol(kind: ResidueKind, display_name: Option<&str>) -> Symbol {
+    use ResidueKind::*;
+    let (shape, fill) = match kind {
+        Hex => (Shape::Circle, colour::WHITE),
+        Glc => (Shape::Circle, colour::BLUE),
+        Man => (Shape::Circle, colour::GREEN),
+        Gal => (Shape::Circle, colour::YELLOW),
+        Gul => (Shape::Circle, colour::ORANGE),
+        Alt => (Shape::Circle, colour::PINK),
+        All => (Shape::Circle, colour::PURPLE),
+        Tal => (Shape::Circle, colour::LIGHT_BLUE),
+        Ido => (Shape::Circle, colour::BROWN),
+
+        HexNAc => (Shape::Square, colour::WHITE),
+        GlcNAc => (Shape::Square, colour::BLUE),
+        ManNAc => (Shape::Square, colour::GREEN),
+        GalNAc => (Shape::Square, colour::YELLOW),
+        GulNAc => (Shape::Square, colour::ORANGE),
+        AltNAc => (Shape::Square, colour::PINK),
+        AllNAc => (Shape::Square, colour::PURPLE),
+        TalNAc => (Shape::Square, colour::LIGHT_BLUE),
+        IdoNAc => (Shape::Square, colour::BROWN),
+
+        HexN => (Shape::NSquare, colour::WHITE),
+        GlcN => (Shape::NSquare, colour::BLUE),
+        ManN => (Shape::NSquare, colour::GREEN),
+        GalN => (Shape::NSquare, colour::YELLOW),
+        GulN => (Shape::NSquare, colour::ORANGE),
+        AltN => (Shape::NSquare, colour::PINK),
+        AllN => (Shape::NSquare, colour::PURPLE),
+        TalN => (Shape::NSquare, colour::LIGHT_BLUE),
+        IdoN => (Shape::NSquare, colour::BROWN),
+
+        HexA => (Shape::SplitDiamondTop, colour::WHITE),
+        GlcA => (Shape::SplitDiamondTop, colour::BLUE),
+        ManA => (Shape::SplitDiamondTop, colour::GREEN),
+        GalA => (Shape::SplitDiamondTop, colour::YELLOW),
+        GulA => (Shape::SplitDiamondTop, colour::ORANGE),
+        AltA => (Shape::SplitDiamondTop, colour::PINK),
+        AllA => (Shape::SplitDiamondTop, colour::PURPLE),
+        TalA => (Shape::SplitDiamondTop, colour::LIGHT_BLUE),
+        IdoA => (Shape::SplitDiamondBottom, colour::BROWN),
+
+        DHex => (Shape::Triangle, colour::WHITE),
+        Qui => (Shape::Triangle, colour::BLUE),
+        Rha => (Shape::Triangle, colour::GREEN),
+        SixDGul => (Shape::Triangle, colour::ORANGE),
+        SixDAlt => (Shape::Triangle, colour::PINK),
+        SixDTal => (Shape::Triangle, colour::LIGHT_BLUE),
+        Fuc => (Shape::Triangle, colour::RED),
+
+        DHexNAc => (Shape::DividedTriangle, colour::WHITE),
+        QuiNAc => (Shape::DividedTriangle, colour::BLUE),
+        RhaNAc => (Shape::DividedTriangle, colour::GREEN),
+        SixDAltNAc => (Shape::DividedTriangle, colour::PINK),
+        SixDTalNAc => (Shape::DividedTriangle, colour::LIGHT_BLUE),
+        FucNAc => (Shape::DividedTriangle, colour::RED),
+
+        DDHex => (Shape::FlatRectangle, colour::WHITE),
+        Oli => (Shape::FlatRectangle, colour::BLUE),
+        Tyv => (Shape::FlatRectangle, colour::GREEN),
+        Abe => (Shape::FlatRectangle, colour::ORANGE),
+        Par => (Shape::FlatRectangle, colour::PINK),
+        Dig => (Shape::FlatRectangle, colour::PURPLE),
+        Col => (Shape::FlatRectangle, colour::LIGHT_BLUE),
+
+        Pen => (Shape::Star, colour::WHITE),
+        Ara => (Shape::Star, colour::GREEN),
+        Lyx => (Shape::Star, colour::YELLOW),
+        Xyl => (Shape::Star, colour::ORANGE),
+        Rib => (Shape::Star, colour::PINK),
+
+        NulO => (Shape::Diamond, colour::WHITE),
+        Kdn => (Shape::Diamond, colour::GREEN),
+        Neu5Ac => (Shape::Diamond, colour::PURPLE),
+        Neu5Gc => (Shape::Diamond, colour::LIGHT_BLUE),
+        Neu => (Shape::Diamond, colour::BROWN),
+        Sia => (Shape::Diamond, colour::RED),
+
+        DDNulO => (Shape::FlatDiamond, colour::WHITE),
+        Pse => (Shape::FlatDiamond, colour::GREEN),
+        Leg => (Shape::FlatDiamond, colour::YELLOW),
+        Aci => (Shape::FlatDiamond, colour::PINK),
+        FourELeg => (Shape::FlatDiamond, colour::LIGHT_BLUE),
+
+        Unknown => (Shape::FlatHexagon, colour::WHITE),
+        Bac => (Shape::FlatHexagon, colour::BLUE),
+        LDManHep => (Shape::FlatHexagon, colour::GREEN),
+        Kdo => (Shape::FlatHexagon, colour::YELLOW),
+        Dha => (Shape::FlatHexagon, colour::ORANGE),
+        DDManHep => (Shape::FlatHexagon, colour::PINK),
+        MurNAc => (Shape::FlatHexagon, colour::PURPLE),
+        MurNGc => (Shape::FlatHexagon, colour::LIGHT_BLUE),
+        Mur => (Shape::FlatHexagon, colour::BROWN),
+
+        Assigned => (Shape::Pentagon, colour::WHITE),
+        Api => (Shape::Pentagon, colour::BLUE),
+        Fru => (Shape::Pentagon, colour::GREEN),
+        Tag => (Shape::Pentagon, colour::YELLOW),
+        Sor => (Shape::Pentagon, colour::ORANGE),
+        Psi => (Shape::Pentagon, colour::PINK),
+    };
+    let label = if kind == Assigned {
+        display_name
+            .and_then(|name| name.chars().find(char::is_ascii_alphabetic))
+            .map(|character| character.to_ascii_uppercase().to_string())
+            .unwrap_or_else(|| "?".into())
+    } else {
+        kind.canonical_name().to_string()
+    };
+    Symbol { shape, fill, label }
 }
 
 // ── Monosaccharide → SNFG symbol ───────────────────────────────────────────
 
 pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
+    if let Some(kind) = classify_residue(residue) {
+        return Ok(registered_symbol(kind, residue.display_name.as_deref()));
+    }
     let skel = &residue.skeleton_code;
     let bare: String = skel.chars().take_while(|c| c.is_ascii_digit()).collect();
     let bare_str: &str = bare.as_str();
@@ -143,7 +274,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
         return Ok(Symbol {
             shape: Shape::Pentagon,
             fill: colour::MAN,
-            label: "Fru",
+            label: "Fru".into(),
         });
     }
 
@@ -152,7 +283,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
         return Ok(Symbol {
             shape: Shape::Star,
             fill: colour::MAN,
-            label: "Sor",
+            label: "Sor".into(),
         });
     }
 
@@ -163,7 +294,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
         return Ok(Symbol {
             shape: Shape::Hexagon,
             fill: colour::KDO,
-            label: "KDO",
+            label: "KDO".into(),
         });
     }
     let n_positions = residue
@@ -176,7 +307,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
         return Ok(Symbol {
             shape: Shape::Hexagon,
             fill: colour::GLC,
-            label: "Bac",
+            label: "Bac".into(),
         });
     }
 
@@ -296,14 +427,14 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
             return Ok(Symbol {
                 shape: Shape::SplitDiamondTop,
                 fill: colour::GLC,
-                label: "GlcA",
+                label: "GlcA".into(),
             });
         }
         "2121" if has_acid => {
             return Ok(Symbol {
                 shape: Shape::SplitDiamondBottom,
                 fill: colour::IDOA,
-                label: "IdoA",
+                label: "IdoA".into(),
             });
         }
         "2122" | "2121" if has_n_mod => {
@@ -311,13 +442,13 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
                 return Ok(Symbol {
                     shape: Shape::Square,
                     fill: colour::GLC,
-                    label: "GlcNAc",
+                    label: "GlcNAc".into(),
                 });
             } else {
                 return Ok(Symbol {
                     shape: Shape::NSquare,
                     fill: colour::GLC,
-                    label: "GlcN",
+                    label: "GlcN".into(),
                 });
             }
         }
@@ -325,14 +456,14 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
             return Ok(Symbol {
                 shape: Shape::Circle,
                 fill: colour::GLC,
-                label: "Glc",
+                label: "Glc".into(),
             });
         }
         "2112" | "2111" if has_acid => {
             return Ok(Symbol {
                 shape: Shape::SplitDiamondTop,
                 fill: colour::GAL,
-                label: "GalA",
+                label: "GalA".into(),
             });
         }
         "2112" | "2111" if has_n_mod => {
@@ -340,13 +471,13 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
                 return Ok(Symbol {
                     shape: Shape::Square,
                     fill: colour::GAL,
-                    label: "GalNAc",
+                    label: "GalNAc".into(),
                 });
             } else {
                 return Ok(Symbol {
                     shape: Shape::NSquare,
                     fill: colour::GAL,
-                    label: "GalN",
+                    label: "GalN".into(),
                 });
             }
         }
@@ -354,21 +485,21 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
             return Ok(Symbol {
                 shape: Shape::Circle,
                 fill: colour::GAL,
-                label: "Gal",
+                label: "Gal".into(),
             });
         }
         "1221" if has_acid => {
             return Ok(Symbol {
                 shape: Shape::SplitDiamondTop,
                 fill: colour::MAN,
-                label: "ManA",
+                label: "ManA".into(),
             });
         }
         "1221" if has_deoxy => {
             return Ok(Symbol {
                 shape: Shape::Triangle,
                 fill: colour::FUC,
-                label: "Fuc",
+                label: "Fuc".into(),
             });
         }
         "1221" if has_n_mod => {
@@ -376,13 +507,13 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
                 return Ok(Symbol {
                     shape: Shape::Square,
                     fill: colour::MAN,
-                    label: "ManNAc",
+                    label: "ManNAc".into(),
                 });
             } else {
                 return Ok(Symbol {
                     shape: Shape::NSquare,
                     fill: colour::MAN,
-                    label: "ManN",
+                    label: "ManN".into(),
                 });
             }
         }
@@ -390,14 +521,14 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
             return Ok(Symbol {
                 shape: Shape::Circle,
                 fill: colour::MAN,
-                label: "Man",
+                label: "Man".into(),
             });
         }
         "1122" if has_acid => {
             return Ok(Symbol {
                 shape: Shape::SplitDiamondTop,
                 fill: colour::MAN,
-                label: "ManA",
+                label: "ManA".into(),
             });
         }
         "1122" if has_n_mod => {
@@ -405,13 +536,13 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
                 return Ok(Symbol {
                     shape: Shape::Square,
                     fill: colour::MAN,
-                    label: "ManNAc",
+                    label: "ManNAc".into(),
                 });
             } else {
                 return Ok(Symbol {
                     shape: Shape::NSquare,
                     fill: colour::MAN,
-                    label: "ManN",
+                    label: "ManN".into(),
                 });
             }
         }
@@ -419,21 +550,21 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
             return Ok(Symbol {
                 shape: Shape::Circle,
                 fill: colour::MAN,
-                label: "Man",
+                label: "Man".into(),
             });
         }
         "2211" if has_acid => {
             return Ok(Symbol {
                 shape: Shape::SplitDiamondTop,
                 fill: colour::MAN,
-                label: "ManA",
+                label: "ManA".into(),
             });
         }
         "2211" if has_deoxy => {
             return Ok(Symbol {
                 shape: Shape::Triangle,
                 fill: colour::RHA,
-                label: "Rha",
+                label: "Rha".into(),
             });
         }
         "2211" if has_n_mod => {
@@ -441,13 +572,13 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
                 return Ok(Symbol {
                     shape: Shape::Square,
                     fill: colour::MAN,
-                    label: "ManNAc",
+                    label: "ManNAc".into(),
                 });
             } else {
                 return Ok(Symbol {
                     shape: Shape::NSquare,
                     fill: colour::MAN,
-                    label: "ManN",
+                    label: "ManN".into(),
                 });
             }
         }
@@ -455,35 +586,35 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
             return Ok(Symbol {
                 shape: Shape::Circle,
                 fill: colour::MAN,
-                label: "Man",
+                label: "Man".into(),
             });
         }
         "1121" => {
             return Ok(Symbol {
                 shape: Shape::Circle,
                 fill: colour::GUL,
-                label: "Gul",
+                label: "Gul".into(),
             });
         }
         "2222" => {
             return Ok(Symbol {
                 shape: Shape::Circle,
                 fill: colour::ALL,
-                label: "All",
+                label: "All".into(),
             });
         }
         "2221" => {
             return Ok(Symbol {
                 shape: Shape::Circle,
                 fill: colour::TAL,
-                label: "Tal",
+                label: "Tal".into(),
             });
         }
         _ if bare_str.contains('d') && bare_str.len() <= 5 && has_deoxy => {
             return Ok(Symbol {
                 shape: Shape::Triangle,
                 fill: colour::FUC,
-                label: "Fuc",
+                label: "Fuc".into(),
             });
         }
         _ => {}
@@ -495,27 +626,27 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
             return Ok(Symbol {
                 shape: Shape::Diamond,
                 fill: colour::NEU5GC,
-                label: "Neu5Gc",
+                label: "Neu5Gc".into(),
             });
         }
         if has_nac {
             return Ok(Symbol {
                 shape: Shape::Diamond,
                 fill: colour::NEU5AC,
-                label: "Neu5Ac",
+                label: "Neu5Ac".into(),
             });
         }
         if residue.modifications.iter().any(|m| m.descriptor == "O") {
             return Ok(Symbol {
                 shape: Shape::Diamond,
                 fill: colour::KDN,
-                label: "KDN",
+                label: "KDN".into(),
             });
         }
         return Ok(Symbol {
             shape: Shape::Diamond,
             fill: colour::NEU5AC,
-            label: "Sia",
+            label: "Sia".into(),
         });
     }
 
@@ -524,7 +655,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
         return Ok(Symbol {
             shape: Shape::Diamond,
             fill: colour::KDO,
-            label: "KDO",
+            label: "KDO".into(),
         });
     }
 
@@ -536,7 +667,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
             return Ok(Symbol {
                 shape: Shape::Star,
                 fill: colour::MAN, // green - same as other furanoses
-                label: "Ara",
+                label: "Ara".into(),
             });
         }
         "212" => {
@@ -544,7 +675,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
             return Ok(Symbol {
                 shape: Shape::Star,
                 fill: colour::XYL,
-                label: "Xyl",
+                label: "Xyl".into(),
             });
         }
         "222" | "112" => {
@@ -552,7 +683,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
             return Ok(Symbol {
                 shape: Shape::Star,
                 fill: colour::MAN, // green - matches reference
-                label: if bare_str == "222" { "Rib" } else { "Lyx" },
+                label: if bare_str == "222" { "Rib" } else { "Lyx" }.into(),
             });
         }
         "221" => {
@@ -560,7 +691,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
             return Ok(Symbol {
                 shape: Shape::Star,
                 fill: colour::MAN, // green - matches reference
-                label: "Lyx",
+                label: "Lyx".into(),
             });
         }
         "121" => {
@@ -568,7 +699,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
             return Ok(Symbol {
                 shape: Shape::Star,
                 fill: colour::MAN, // green - matches reference
-                label: "?",
+                label: "?".into(),
             });
         }
         _ if bare_str.len() == 3 => {
@@ -576,7 +707,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
             return Ok(Symbol {
                 shape: Shape::Star,
                 fill: colour::MAN, // green - matches reference
-                label: "Xyl",
+                label: "Xyl".into(),
             });
         }
         _ => {}
@@ -594,7 +725,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
                 Shape::Circle
             },
             fill: colour::UNKNOWN,
-            label: if has_nac { "HexNAc" } else { "Hex" },
+            label: if has_nac { "HexNAc" } else { "Hex" }.into(),
         });
     }
 
@@ -607,7 +738,7 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
     Ok(Symbol {
         shape,
         fill,
-        label: "?",
+        label: "?".into(),
     })
 }
 
@@ -1109,6 +1240,7 @@ pub fn render_svg_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> Sn
             // sulfation / modification label above the shape
             let mod_label = build_modification_label(residue);
             if !mod_label.is_empty() {
+                let mod_label = escape_xml_text(&mod_label);
                 svg.push_str(&format!(
                     "<text x=\"{x}\" y=\"{y}\" font-family=\"{ff}\" font-size=\"12px\" fill=\"#000\" text-anchor=\"middle\" dominant-baseline=\"central\">{lbl}</text>\n",
                     x = cx, y = cy - NODE_R * s - 14.0 * s,
@@ -1117,13 +1249,14 @@ pub fn render_svg_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> Sn
                 ));
             }
 
-            if opts.show_labels {
+            if opts.show_labels || is_assigned_symbol(residue, &symbol) {
+                let label = escape_xml_text(&symbol.label);
                 svg.push_str(&format!(
                     r#"<text x="{x}" y="{y}" class="res-label">{lbl}</text>
 "#,
                     x = cx,
                     y = cy,
-                    lbl = symbol.label,
+                    lbl = label,
                 ));
             }
         }
@@ -1134,16 +1267,20 @@ pub fn render_svg_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> Sn
 }
 
 fn render_composition_svg(graph: &ResidueGraph, opts: &RenderOptions) -> SnfgResult<String> {
-    let mut groups: Vec<(String, Symbol, String, usize)> = Vec::new();
+    let mut groups: Vec<(String, Symbol, String, bool, usize)> = Vec::new();
     for residue in graph.inner().node_weights() {
         let key = format!("{residue:?}");
-        if let Some((_, _, _, count)) = groups.iter_mut().find(|(value, _, _, _)| *value == key) {
+        if let Some((_, _, _, _, count)) =
+            groups.iter_mut().find(|(value, _, _, _, _)| *value == key)
+        {
             *count += 1;
         } else {
+            let symbol = symbol_for(residue)?;
             groups.push((
                 key,
-                symbol_for(residue)?,
+                symbol.clone(),
                 build_modification_label(residue),
+                is_assigned_symbol(residue, &symbol),
                 1,
             ));
         }
@@ -1163,18 +1300,19 @@ fn render_composition_svg(graph: &ResidueGraph, opts: &RenderOptions) -> SnfgRes
         font = opts.font_family,
         count_size = 18.0 * scale,
     );
-    for (index, (_, symbol, modification, count)) in groups.iter().enumerate() {
+    for (index, (_, symbol, modification, assigned, count)) in groups.iter().enumerate() {
         let x = 75.0 * scale + index as f64 * spacing;
         let y = 62.0 * scale;
         draw_shape(&mut svg, symbol, x, y, NODE_R * scale, opts);
-        if opts.show_labels {
+        if opts.show_labels || *assigned {
+            let label = escape_xml_text(&symbol.label);
             svg.push_str(&format!(
-                r#"<text x="{x}" y="{y}" class="res-label">{}</text>
+                r#"<text x="{x}" y="{y}" class="res-label">{label}</text>
 "#,
-                symbol.label
             ));
         }
         if !modification.is_empty() {
+            let modification = escape_xml_text(modification);
             svg.push_str(&format!(
                 r#"<text x="{x}" y="{}" class="res-label">{modification}</text>
 "#,
@@ -1189,6 +1327,11 @@ fn render_composition_svg(graph: &ResidueGraph, opts: &RenderOptions) -> SnfgRes
     }
     svg.push_str("</svg>\n");
     Ok(svg)
+}
+
+fn is_assigned_symbol(residue: &Monosaccharide, symbol: &Symbol) -> bool {
+    symbol.shape == Shape::Pentagon
+        && classify_residue(residue).is_some_and(|kind| kind == ResidueKind::Assigned)
 }
 
 fn draw_linkage_text(
@@ -1222,12 +1365,22 @@ fn draw_linkage_text(
     } else if angle < -90.0 {
         angle += 180.0;
     }
+    let label = escape_xml_text(label);
     svg.push_str(&format!(
         r#"<text x="0" y="0" class="link" transform="translate({x},{y}) rotate({angle})">{label}</text>
 "#,
         x = mx + ox,
         y = my + oy,
     ));
+}
+
+fn escape_xml_text(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 fn empty_svg() -> String {
@@ -1348,6 +1501,33 @@ fn draw_shape(svg: &mut String, sym: &Symbol, cx: f64, cy: f64, r: f64, opts: &R
                 fill = fill, stroke = stroke, sw = sw,
             ));
         }
+        Shape::DividedTriangle => {
+            let h = r * 1.732;
+            let top = cy - h * 0.667;
+            let bottom = cy + h * 0.333;
+            svg.push_str(&format!(
+                r#"<polygon points="{cx},{top} {left},{bottom} {right},{bottom}" fill="white" stroke="{stroke}" stroke-width="{sw}"/>
+"#,
+                left = cx - r,
+                right = cx + r,
+            ));
+            svg.push_str(&format!(
+                r#"<polygon points="{cx},{top} {cx},{bottom} {right},{bottom}" fill="{fill}" stroke="none"/>
+<line x1="{cx}" y1="{top}" x2="{cx}" y2="{bottom}" stroke="{stroke}" stroke-width="1.5"/>
+"#,
+                right = cx + r,
+            ));
+        }
+        Shape::FlatRectangle => {
+            svg.push_str(&format!(
+                r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/>
+"#,
+                x = cx - r,
+                y = cy - r * 0.38,
+                w = r * 2.0,
+                h = r * 0.76,
+            ));
+        }
         Shape::Diamond => {
             let d = r * 1.2;
             svg.push_str(&format!(
@@ -1358,6 +1538,18 @@ fn draw_shape(svg: &mut String, sym: &Symbol, cx: f64, cy: f64, r: f64, opts: &R
                 x3 = cx, y3 = cy + d,
                 x4 = cx - d, y4 = cy,
                 fill = fill, stroke = stroke, sw = sw,
+            ));
+        }
+        Shape::FlatDiamond => {
+            let dx = r * 1.25;
+            let dy = r * 0.62;
+            svg.push_str(&format!(
+                r#"<polygon points="{cx},{top} {right},{cy} {cx},{bottom} {left},{cy}" fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/>
+"#,
+                top = cy - dy,
+                right = cx + dx,
+                bottom = cy + dy,
+                left = cx - dx,
             ));
         }
         Shape::SplitDiamondTop => {
@@ -1427,6 +1619,21 @@ fn draw_shape(svg: &mut String, sym: &Symbol, cx: f64, cy: f64, r: f64, opts: &R
                 fill, stroke, sw
             ));
             svg.push('\n');
+        }
+        Shape::FlatHexagon => {
+            let dx = r * 1.15;
+            let shoulder = r * 0.72;
+            let dy = r * 0.58;
+            svg.push_str(&format!(
+                r#"<polygon points="{l0},{cy} {l1},{top} {r1},{top} {r0},{cy} {r1},{bottom} {l1},{bottom}" fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/>
+"#,
+                l0 = cx - dx,
+                l1 = cx - shoulder,
+                r1 = cx + shoulder,
+                r0 = cx + dx,
+                top = cy - dy,
+                bottom = cy + dy,
+            ));
         }
         Shape::Pentagon => {
             svg.push_str(&draw_regular_points(cx, cy, r * 1.05, r * 1.05, 5, 1));
@@ -1572,6 +1779,87 @@ mod tests {
     }
 
     #[test]
+    fn official_registry_covers_every_snfg_shape_and_colour() {
+        for kind in ResidueKind::ALL {
+            let symbol = registered_symbol(*kind, Some("Example"));
+            assert!(!symbol.label.is_empty(), "{kind:?}");
+        }
+
+        for (kind, shape, fill) in [
+            (ResidueKind::Hex, Shape::Circle, colour::WHITE),
+            (ResidueKind::Glc, Shape::Circle, colour::BLUE),
+            (ResidueKind::ManNAc, Shape::Square, colour::GREEN),
+            (ResidueKind::GalN, Shape::NSquare, colour::YELLOW),
+            (
+                ResidueKind::IdoA,
+                Shape::SplitDiamondBottom,
+                colour::BROWN,
+            ),
+            (ResidueKind::Fuc, Shape::Triangle, colour::RED),
+            (
+                ResidueKind::QuiNAc,
+                Shape::DividedTriangle,
+                colour::BLUE,
+            ),
+            (
+                ResidueKind::Dig,
+                Shape::FlatRectangle,
+                colour::PURPLE,
+            ),
+            (ResidueKind::Xyl, Shape::Star, colour::ORANGE),
+            (ResidueKind::Neu5Gc, Shape::Diamond, colour::LIGHT_BLUE),
+            (ResidueKind::Leg, Shape::FlatDiamond, colour::YELLOW),
+            (ResidueKind::MurNAc, Shape::FlatHexagon, colour::PURPLE),
+            (ResidueKind::Psi, Shape::Pentagon, colour::PINK),
+        ] {
+            let symbol = registered_symbol(kind, None);
+            assert_eq!(symbol.shape, shape, "{kind:?}");
+            assert_eq!(symbol.fill, fill, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn arbitrary_name_uses_assigned_white_pentagon_and_safe_label() {
+        let mut residue = crabwurcs_core::residue_from_kind(ResidueKind::Hex).unwrap();
+        residue.residue_kind = None;
+        residue.display_name = Some("<foo&bar>".into());
+        let symbol = symbol_for(&residue).unwrap();
+        assert_eq!(symbol.shape, Shape::Pentagon);
+        assert_eq!(symbol.fill, colour::WHITE);
+        assert_eq!(symbol.label, "F");
+
+        let mut graph = ResidueGraph::new();
+        graph.add_residue(residue);
+        let svg = render_svg(&graph).unwrap();
+        assert!(svg.contains(">F</text>"));
+        assert!(!svg.contains("<foo"));
+    }
+
+    #[test]
+    fn every_registered_symbol_can_be_rendered() {
+        for &kind in ResidueKind::ALL {
+            let mut residue = crabwurcs_core::residue_from_kind(kind).unwrap_or_else(|_| {
+                crabwurcs_core::residue_from_kind(ResidueKind::Hex).unwrap()
+            });
+            residue.residue_kind = Some(kind);
+
+            let mut graph = ResidueGraph::new();
+            graph.add_residue(residue);
+            let svg = render_svg(&graph).unwrap();
+            assert!(
+                svg.contains("<svg") && svg.contains("</svg>"),
+                "failed to render {}",
+                kind.canonical_name()
+            );
+        }
+    }
+
+    #[test]
+    fn dynamic_svg_text_is_xml_escaped() {
+        assert_eq!(escape_xml_text("<&>\"'"), "&lt;&amp;&gt;&quot;&apos;");
+    }
+
+    #[test]
     fn test_symbol_neu5ac() {
         let g = parse("WURCS=2.0/2,2,1/[u2112h][Aad21122h-2a_2-6_5*NCC/3=O]/1-2/a3-b2");
         let children: Vec<_> = g
@@ -1586,11 +1874,11 @@ mod tests {
     }
 
     #[test]
-    fn glycoshape_sialic_acid_palette_and_fruf_symbol_are_exact() {
+    fn official_sialic_acid_palette_and_fruf_symbol_are_exact() {
         let neu5gc = parse("WURCS=2.0/1,1,0/[AUd21122h_5*NCCO/3=O]/1/");
         let neu5gc = symbol_for(neu5gc.residue(neu5gc.root().unwrap()).unwrap()).unwrap();
         assert_eq!(neu5gc.shape, Shape::Diamond);
-        assert_eq!(neu5gc.fill, "#91D3E3");
+        assert_eq!(neu5gc.fill, colour::LIGHT_BLUE);
 
         let fructan = parse("WURCS=2.0/2,3,2/[hU122h][ha122h-2b_2-5]/1-2-2/a1-b2_b1-c2");
         for residue in fructan.inner().node_weights() {
@@ -1614,13 +1902,13 @@ mod tests {
     fn test_kdo_and_bac_use_reference_flat_hexagons() {
         let kdo = parse("WURCS=2.0/1,1,0/[AUd1122h]/1/");
         let kdo_symbol = symbol_for(kdo.residue(kdo.root().unwrap()).unwrap()).unwrap();
-        assert_eq!(kdo_symbol.shape, Shape::Hexagon);
+        assert_eq!(kdo_symbol.shape, Shape::FlatHexagon);
         assert_eq!(kdo_symbol.fill, colour::KDO);
-        assert_eq!(kdo_symbol.label, "KDO");
+        assert_eq!(kdo_symbol.label, "Kdo");
 
         let bac = parse("WURCS=2.0/1,1,0/[u2122m_2*NCC/3=O_4*NCC/3=O]/1/");
         let bac_symbol = symbol_for(bac.residue(bac.root().unwrap()).unwrap()).unwrap();
-        assert_eq!(bac_symbol.shape, Shape::Hexagon);
+        assert_eq!(bac_symbol.shape, Shape::FlatHexagon);
         assert_eq!(bac_symbol.fill, colour::GLC);
         assert_eq!(bac_symbol.label, "Bac");
     }

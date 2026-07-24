@@ -26,7 +26,9 @@ pub use crabwurcs_snfg as snfg;
 
 // Convenience re-exports of the most commonly needed types, so simple
 // consumers don't need to reach into `core::`.
-pub use crabwurcs_core::{CoreError, CoreResult, ResidueGraph};
+pub use crabwurcs_core::{
+    classify_residue, residue_from_kind, CoreError, CoreResult, ResidueGraph, ResidueKind,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {

@@ -192,6 +192,16 @@ pub struct Monosaccharide {
     pub anomeric_symbol: AnomericSymbol,
     pub anomeric_prefix: String,
     pub modifications: Vec<Modification>,
+    /// Original notation name for an SNFG-assigned residue whose chemistry is
+    /// not present in the official registry. Standard WURCS cannot serialize
+    /// this value without losing its identity.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub display_name: Option<String>,
+    /// Semantic registry identity retained while a graph remains in memory.
+    /// This disambiguates notation-level classes that share a WURCS skeleton,
+    /// such as `Sia` and generic `NulO`.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub residue_kind: Option<crate::ResidueKind>,
 }
 
 impl Monosaccharide {
@@ -219,7 +229,14 @@ impl Monosaccharide {
             anomeric_symbol,
             anomeric_prefix,
             modifications,
+            display_name: None,
+            residue_kind: None,
         }
+    }
+
+    pub fn with_display_name(mut self, display_name: impl Into<String>) -> Self {
+        self.display_name = Some(display_name.into());
+        self
     }
 }
 

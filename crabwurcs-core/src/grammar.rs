@@ -27,6 +27,22 @@ pub fn parse_wurcs(input: &str) -> CoreResult<ResidueGraph> {
 }
 
 pub fn write_wurcs(graph: &ResidueGraph) -> CoreResult<String> {
+    if let Some(name) = graph
+        .inner()
+        .node_weights()
+        .find_map(|residue| residue.display_name.as_deref())
+    {
+        return Err(CoreError::UnrepresentableResidue(name.to_string()));
+    }
+    if let Some(kind) = graph.inner().node_weights().find_map(|residue| {
+        residue
+            .residue_kind
+            .filter(|kind| kind.unique_residue().is_none())
+    }) {
+        return Err(CoreError::UnrepresentableResidue(
+            kind.canonical_name().to_string(),
+        ));
+    }
     if let Some(source) = graph.source_wurcs() {
         return Ok(source.to_string());
     }
@@ -519,6 +535,8 @@ fn parse_single_residue(input: &str) -> Monosaccharide {
         anomeric_symbol: anomeric_sym,
         anomeric_prefix,
         modifications,
+        display_name: None,
+        residue_kind: None,
     }
 }
 
@@ -543,30 +561,21 @@ fn parse_anomeric_prefix(input: &str) -> (String, &str) {
     if input.is_empty() {
         return (String::from("x"), input);
     }
-    // Unknown stereochemistry backbones use literal `x` descriptors
-    // (`uxxxxh`). Only the leading `u` is the prefix; consuming the x/h
-    // run as a prefix would erase the backbone and misclassify Hex/HexNAc.
-    if input.len() > 1
-        && matches!(input.as_bytes()[0] as char, 'u' | 'a' | 'o')
-        && input.as_bytes()[1] as char == 'x'
-    {
-        return (input[..1].to_string(), &input[1..]);
-    }
-    let mut end = 0;
-    for c in input.chars() {
-        if matches!(
-            c,
-            'a' | 'b' | 'u' | 'x' | 'o' | 'c' | 'd' | 'l' | 'h' | 'A' | 'U'
-        ) {
-            end += c.len_utf8();
-        } else {
-            break;
+    // Prefixes have a small grammar; skeletons may themselves begin with
+    // `x` or `d`, so consuming an arbitrary letter run erases generic and
+    // dideoxy backbones such as `axxxxh` and `adxxxm`.
+    for prefix in ["Aad", "AUd", "AOd", "Ad", "ha", "hU", "hO"] {
+        if let Some(rest) = input.strip_prefix(prefix) {
+            return (prefix.to_string(), rest);
         }
     }
-    if end == 0 {
-        (String::from("x"), input)
-    } else {
+    if let Some(prefix) = input.chars().next().filter(|character| {
+        matches!(character, 'u' | 'a' | 'o' | 'U' | 'A')
+    }) {
+        let end = prefix.len_utf8();
         (input[..end].to_string(), &input[end..])
+    } else {
+        (String::from("x"), input)
     }
 }
 
