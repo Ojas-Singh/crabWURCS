@@ -104,9 +104,21 @@ All formats convert through a shared `ResidueGraph` model, ensuring consistent r
 
 ## Documentation
 
+- **[Supported monosaccharides](crabwurcs/docs/supported-monosaccharides.md)** — every SNFG 2.0.4 symbol, colour, WURCS code, and alias, with a rendered thumbnail for each
+- **[SNFG rendering](crabwurcs/docs/rendering.md)** — shapes, the RGB palette, layout rules, render options, and SVG/PNG output
+- **[Motif highlighting](crabwurcs/docs/motif-highlighting.md)** — wildcard-aware motif matching and the muted palette, with before/after figures
 - **[Status & Progress](docs/status.md)**: Detailed development status and testing coverage
 - **[API Documentation](https://docs.rs/crabwurcs)**: Full API reference
 - Repository: [https://github.com/Ojas-Singh/crabWURCS](https://github.com/Ojas-Singh/crabWURCS)
+
+The symbol thumbnails in these guides are generated from the renderer itself:
+
+```bash
+cargo run -p crabwurcs --example generate_docs_assets
+```
+
+Re-run it whenever the symbol table, palette, or layout in `crabwurcs-snfg`
+changes, then commit the regenerated files under `crabwurcs/docs/img/`.
 
 ## License
 

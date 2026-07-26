@@ -1196,6 +1196,45 @@ pub fn render_png_with_motifs(
     svg_to_png(&render_svg_with_motifs(graph, motifs, opts)?)
 }
 
+/// Render a single SNFG symbol as a tightly-cropped, transparent-background
+/// SVG.
+///
+/// Convenient for building legends, icons, or thumbnail galleries — for
+/// example the per-residue symbol table in this crate's documentation. The
+/// symbol is selected with the same [`symbol_for`] classification used by the
+/// full graph renderer, so a standalone symbol always matches what
+/// [`render_svg`] would draw for a one-residue graph. Pass `show_labels: true`
+/// in [`RenderOptions`] to draw the residue abbreviation inside the shape.
+pub fn render_symbol_svg(residue: &Monosaccharide, opts: &RenderOptions) -> SnfgResult<String> {
+    let symbol = symbol_for(residue)?;
+    let r = NODE_R * opts.scale;
+    // Star and diamond outer vertices reach roughly 1.3 × r; leave room for
+    // the stroke so the shapes are not clipped at the canvas edge.
+    let extent = r * 1.3 + 4.0 * opts.scale;
+    let side = extent * 2.0;
+    let cx = side / 2.0;
+    let cy = side / 2.0;
+    let mut svg = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">
+"#,
+        w = side,
+        h = side,
+    );
+    draw_shape(&mut svg, &symbol, cx, cy, r, opts);
+    if opts.show_labels {
+        let x = cx;
+        let y = cy;
+        let ff = opts.font_family.as_str();
+        let label = escape_xml_text(&symbol.label);
+        svg.push_str(&format!(
+            r##"<text x="{x}" y="{y}" font-family="{ff}" font-size="11px" fill="#000" text-anchor="middle" dominant-baseline="central">{label}</text>
+"##,
+        ));
+    }
+    svg.push_str("</svg>\n");
+    Ok(svg)
+}
+
 fn svg_to_png(svg: &str) -> SnfgResult<Vec<u8>> {
     let mut options = resvg::usvg::Options::default();
     options.fontdb_mut().load_system_fonts();
@@ -2023,6 +2062,30 @@ mod tests {
         let sym = symbol_for(res).unwrap();
         assert_eq!(sym.shape, Shape::Circle);
         assert_eq!(sym.fill, colour::GLC);
+    }
+
+    #[test]
+    fn render_symbol_svg_draws_one_shape_on_a_transparent_canvas() {
+        let glc = crabwurcs_core::residue_from_kind(ResidueKind::Glc).unwrap();
+        let svg = render_symbol_svg(&glc, &RenderOptions::default()).unwrap();
+        assert!(svg.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\""));
+        assert!(svg.contains("<circle"));
+        assert!(svg.contains("fill=\"#0072BC\""));
+        // Single-symbol output must not leak the full-graph scaffolding.
+        assert!(!svg.contains("class=\"bond\""));
+        assert!(!svg.contains("<metadata"));
+        assert!(!svg.contains("<title"));
+
+        // Labels are opt-in.
+        let labeled = render_symbol_svg(
+            &glc,
+            &RenderOptions {
+                show_labels: true,
+                ..RenderOptions::default()
+            },
+        )
+        .unwrap();
+        assert!(labeled.contains(">Glc</text>"));
     }
 
     #[test]

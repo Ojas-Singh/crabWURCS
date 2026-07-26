@@ -17,6 +17,14 @@
 //! Equivalent SMILES serializations are resolved by the pure-Rust molecular
 //! backend; previously unseen glycan extraction remains the unfinished
 //! MolWURCS-specific layer.
+//!
+//! The sections below — generated from the renderer's own output — document
+//! every supported monosaccharide symbol, the SNFG rendering rules, and motif
+//! highlighting.
+
+#![doc = include_str!("../docs/supported-monosaccharides.md")]
+#![doc = include_str!("../docs/rendering.md")]
+#![doc = include_str!("../docs/motif-highlighting.md")]
 
 pub use crabwurcs_core as core;
 pub use crabwurcs_iupac as iupac;
@@ -34,6 +42,7 @@ pub use crabwurcs_iupac::write_iupac_condensed_canonical;
 pub use crabwurcs_snfg::{
     RenderOptions, SnfgError, SnfgResult, SourceNotation, render_png, render_png_with_motifs,
     render_png_with_options, render_svg, render_svg_with_motifs, render_svg_with_options,
+    render_symbol_svg,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

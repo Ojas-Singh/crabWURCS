@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="snfg-title snfg-desc" viewBox="0 0 515 155" width="515" height="155">
+<title id="snfg-title">SNFG glycan: {Hex}3,{HexNAc}2,{dHex}1</title>
+<desc id="snfg-desc">Canonical IUPAC condensed: {Hex}3,{HexNAc}2,{dHex}1. Canonical WURCS: WURCS=2.0/3,6,0+/[axxxxh-1x_1-5][axxxxh-1x_1-5_2*NCC/3=O][axxxxm-1x_1-5]/1-1-1-2-2-3/.</desc>
+<metadata id="crabwurcs-notations">
+<crabwurcs:notations xmlns:crabwurcs="https://github.com/Ojas-Singh/crabWURCS/ns/metadata/1">
+    <crabwurcs:iupac-condensed canonical="true" available="true">{Hex}3,{HexNAc}2,{dHex}1</crabwurcs:iupac-condensed>
+    <crabwurcs:wurcs canonical="true" available="true">WURCS=2.0/3,6,0+/[axxxxh-1x_1-5][axxxxh-1x_1-5_2*NCC/3=O][axxxxm-1x_1-5]/1-1-1-2-2-3/</crabwurcs:wurcs>
+    <crabwurcs:source format="iupac-condensed">{Hex}3,{HexNAc}2,{dHex}1</crabwurcs:source>
+  </crabwurcs:notations>
+</metadata>
+<style>
+  .res-label { font-family: Arial, Helvetica, sans-serif; font-size: 11px; fill: #000; text-anchor: middle; dominant-baseline: central; }
+  .count { font-family: Arial, Helvetica, sans-serif; font-size: 18px; font-weight: 600; fill: #000; text-anchor: middle; }
+</style>
+<circle cx="75" cy="62" r="25" fill="#FFFFFF" stroke="#000000" stroke-width="2"/>
+<text x="75" y="117" class="count">×3</text>
+<rect x="205" y="37" width="50" height="50" fill="#FFFFFF" stroke="#000000" stroke-width="2"/>
+<text x="230" y="117" class="count">×2</text>
+<polygon points="385,33.1189 360,76.41890000000001 410,76.41890000000001" fill="#FFFFFF" stroke="#000000" stroke-width="2"/>
+<text x="385" y="117" class="count">×1</text>
+</svg>
