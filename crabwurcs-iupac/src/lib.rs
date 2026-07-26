@@ -2245,6 +2245,18 @@ fn residue_to_iupac_name(residue: &Monosaccharide) -> String {
         _ => format!("Res{}", bare.len()),
     });
 
+    // The registry identifies an N-sulfated hexosamine as its underlying
+    // HexN family. Preserve the chemically specific `NS` suffix in text
+    // notations instead of degrading GlcNS to GlcN.
+    if name.ends_with('N')
+        && residue
+            .modifications
+            .iter()
+            .any(|modification| modification.descriptor.contains("NSO"))
+    {
+        name.push('S');
+    }
+
     for modification in &residue.modifications {
         let already_in_base = (modification.descriptor.contains("NC")
             && (name.contains("NAc") || name.contains("NGc") || name.starts_with("Neu")))
@@ -2551,6 +2563,28 @@ fn normalize_extended_residue(name: &str) -> String {
         ("IdopA", "IdoA"),
     ] {
         result = result.replace(from, to);
+    }
+
+    // GlycoShape's extended notation writes sulfated hexosamines as, for
+    // example, GlcN2,6S2 or GlcN2,3,6S3. Position 2 is the N-sulfate; the
+    // remaining positions are O-sulfates. Convert that compact count notation
+    // to the condensed suffix understood by the residue parser.
+    let n_sulfate_re =
+        regex::Regex::new(r"^(?P<base>[A-Za-z]+)N(?P<positions>[0-9]+(?:,[0-9]+)*)S[0-9]+$")
+            .expect("extended N-sulfate regex");
+    if let Some(captures) = n_sulfate_re.captures(&result) {
+        let positions = captures["positions"]
+            .split(',')
+            .filter_map(|position| position.parse::<u8>().ok())
+            .collect::<Vec<_>>();
+        if positions.contains(&2) {
+            let o_sulfates = positions
+                .into_iter()
+                .filter(|position| *position != 2)
+                .map(|position| format!("{position}S"))
+                .collect::<String>();
+            return format!("{}NS{o_sulfates}", &captures["base"]);
+        }
     }
     result
 }
@@ -3149,6 +3183,16 @@ mod tests {
             assert!(wurcs.contains("5*NCCO/3=O"), "{wurcs}");
             assert_eq!(write_iupac_condensed(&graph).unwrap(), "Neu5Gc(a2-3)Gal");
         }
+    }
+
+    #[test]
+    fn glycoshape_extended_n_sulfate_counts_preserve_n_sulfation() {
+        let graph =
+            parse_iupac_extended("α-D-GlcpN2,3,6S3-(1→4)-α-L-IdopA2S-(1→4)-D-GlcN2,6S2").unwrap();
+        assert_eq!(
+            write_iupac_condensed_canonical(&graph).unwrap(),
+            "GlcNS3S6S(a1-4)IdoA2S(a1-4)GlcNS6S"
+        );
     }
 
     #[test]

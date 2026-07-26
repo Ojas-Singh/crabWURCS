@@ -223,6 +223,7 @@ fn modification_matches(
     }
     if required.descriptor == "N" {
         return actual.descriptor == "N"
+            || actual.descriptor.starts_with("NSO")
             || (allow_n_derivatives && actual.descriptor.starts_with('N'));
     }
     if required.descriptor.starts_with("NCCO") {
@@ -312,5 +313,13 @@ mod tests {
             residue.residue_kind = None;
             assert_eq!(classify_residue(&residue), Some(*kind), "{kind:?}");
         }
+    }
+
+    #[test]
+    fn n_sulfation_preserves_the_hexosamine_identity() {
+        let graph =
+            crate::parse_wurcs("WURCS=2.0/1,1,0/[u2122h_2*NSO/3=O/3=O_6*OSO/3=O/3=O]/1/").unwrap();
+        let residue = graph.residue(graph.root().unwrap()).unwrap();
+        assert_eq!(classify_residue(residue), Some(ResidueKind::GlcN));
     }
 }

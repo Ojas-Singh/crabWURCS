@@ -695,20 +695,21 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
                 label: "Xyl".into(),
             });
         }
-        "222" | "112" => {
-            // Rib (ribose) or Lyx (lyxose)
+        "112" | "221" => {
+            // Lyx and its absolute-configuration inverse use the same family
+            // colour in SNFG.
             return Ok(Symbol {
                 shape: Shape::Star,
-                fill: colour::MAN, // green - matches reference
-                label: if bare_str == "222" { "Rib" } else { "Lyx" }.into(),
+                fill: colour::YELLOW,
+                label: "Lyx".into(),
             });
         }
-        "221" => {
-            // Lyx (lyxose) - alternative form
+        "111" | "222" => {
+            // Rib and its absolute-configuration inverse.
             return Ok(Symbol {
                 shape: Shape::Star,
-                fill: colour::MAN, // green - matches reference
-                label: "Lyx".into(),
+                fill: colour::PINK,
+                label: "Rib".into(),
             });
         }
         "121" => {
@@ -1335,6 +1336,7 @@ fn render_svg_internal(
   .bond {{ stroke: #000; stroke-width: {bw}; fill: none; stroke-linecap: round; }}
   .uncertain {{ stroke: #555; stroke-width: {ubw}; fill: none; stroke-linecap: round; stroke-dasharray: 8 7; }}
   .link {{ font-family: {ff}; font-size: {ls}px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
+  .mod-label {{ font-family: {ff}; font-size: {ls}px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
   .node {{ fill: none; }}
   .res-label {{ font-family: {ff}; font-size: 11px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
 {highlight_css}</style>
@@ -1474,14 +1476,24 @@ fn render_svg_internal(
             }
             draw_shape(&mut svg, &symbol, cx, cy, NODE_R * s, opts);
 
-            // sulfation / modification label above the shape
-            let mod_label = build_modification_label(residue);
-            if !mod_label.is_empty() {
-                let mod_label = escape_xml_text(&mod_label);
+            // Put N- and lower-ring O-sulfates below the symbol and the
+            // remaining O-sulfates above it.
+            let mod_labels = build_modification_labels(residue);
+            if !mod_labels.above.is_empty() {
+                let mod_label = escape_xml_text(&mod_labels.above);
                 svg.push_str(&format!(
-                    "<text x=\"{x}\" y=\"{y}\" font-family=\"{ff}\" font-size=\"12px\" fill=\"#000\" text-anchor=\"middle\" dominant-baseline=\"central\">{lbl}</text>\n",
-                    x = cx, y = cy - NODE_R * s - 14.0 * s,
-                    ff = opts.font_family,
+                    "<text x=\"{x}\" y=\"{y}\" class=\"mod-label\">{lbl}</text>\n",
+                    x = cx,
+                    y = cy - NODE_R * s - 14.0 * s,
+                    lbl = mod_label,
+                ));
+            }
+            if !mod_labels.below.is_empty() {
+                let mod_label = escape_xml_text(&mod_labels.below);
+                svg.push_str(&format!(
+                    "<text x=\"{x}\" y=\"{y}\" class=\"mod-label\">{lbl}</text>\n",
+                    x = cx,
+                    y = cy + NODE_R * s + 14.0 * s,
                     lbl = mod_label,
                 ));
             }
@@ -1511,7 +1523,7 @@ fn render_composition_svg(
     opts: &RenderOptions,
     highlights: Option<&MotifSelection>,
 ) -> SnfgResult<String> {
-    let mut groups: Vec<(String, Symbol, String, bool, Vec<usize>)> = Vec::new();
+    let mut groups: Vec<(String, Symbol, ModificationLabels, bool, Vec<usize>)> = Vec::new();
     for node in graph.inner().node_indices() {
         let residue = &graph.inner()[node];
         let key = format!("{residue:?}");
@@ -1524,7 +1536,7 @@ fn render_composition_svg(
             groups.push((
                 key,
                 symbol.clone(),
-                build_modification_label(residue),
+                build_modification_labels(residue),
                 is_assigned_symbol(residue, &symbol),
                 vec![node.index()],
             ));
@@ -1534,7 +1546,7 @@ fn render_composition_svg(
     let scale = opts.scale;
     let spacing = 155.0 * scale;
     let width = (groups.len().max(1) as f64 * spacing) + 50.0 * scale;
-    let height = 155.0 * scale;
+    let height = 175.0 * scale;
     let highlight_css = if highlights.is_some() {
         MOTIF_DEEMPHASIS_CSS
     } else {
@@ -1545,10 +1557,12 @@ fn render_composition_svg(
         r#"<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="snfg-title snfg-desc" viewBox="0 0 {width} {height}" width="{width}" height="{height}">
 {metadata}<style>
   .res-label {{ font-family: {font}; font-size: 11px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
+  .mod-label {{ font-family: {font}; font-size: {mod_size}px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
   .count {{ font-family: {font}; font-size: {count_size}px; font-weight: 600; fill: #000; text-anchor: middle; }}
 {highlight_css}</style>
 "#,
         font = opts.font_family,
+        mod_size = LABEL_SIZE * scale,
         count_size = 18.0 * scale,
         highlight_css = highlight_css,
         metadata = metadata,
@@ -1577,18 +1591,26 @@ fn render_composition_svg(
 "#,
             ));
         }
-        if !modification.is_empty() {
-            let modification = escape_xml_text(modification);
+        if !modification.above.is_empty() {
+            let modification = escape_xml_text(&modification.above);
             svg.push_str(&format!(
-                r#"<text x="{x}" y="{}" class="res-label">{modification}</text>
+                r#"<text x="{x}" y="{}" class="mod-label">{modification}</text>
 "#,
                 y - 42.0 * scale
+            ));
+        }
+        if !modification.below.is_empty() {
+            let modification = escape_xml_text(&modification.below);
+            svg.push_str(&format!(
+                r#"<text x="{x}" y="{}" class="mod-label">{modification}</text>
+"#,
+                y + 42.0 * scale
             ));
         }
         svg.push_str(&format!(
             r#"<text x="{x}" y="{}" class="count">×{count}</text>
 "#,
-            y + 55.0 * scale,
+            y + 75.0 * scale,
             count = nodes.len()
         ));
         if highlights.is_some() {
@@ -1745,45 +1767,56 @@ fn empty_svg(graph: &ResidueGraph, opts: &RenderOptions) -> String {
 
 // ── Modification label ─────────────────────────────────────────────────────
 
-/// Build a short sulfation / modification label.
-/// e.g. GlcNS6S → "S6S", IdoA2S → "2S", GlcNS → "S", GlcA3S → "3S"
-/// Convention: the NSquare shape already implies N-modification,
-/// so N-sulfation alone is shown as "S", not "N".
-fn build_modification_label(res: &Monosaccharide) -> String {
-    let mut o_sulfo_positions: Vec<u8> = Vec::new();
-    let mut has_n_sulfo = false;
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ModificationLabels {
+    above: String,
+    below: String,
+}
+
+/// Build short O-sulfation labels around an SNFG symbol.
+///
+/// N-sulfation is written as `NS` below the diagonally divided NSquare.
+/// O-sulfates at positions 2 and 3 are also placed below the symbol; positions
+/// 4 and above are placed above it. For example, GlcNS6S yields `6S` above and
+/// `NS` below, while IdoA2S yields `2S` below.
+fn build_modification_labels(res: &Monosaccharide) -> ModificationLabels {
+    let mut above_positions: Vec<u8> = Vec::new();
+    let mut below_positions: Vec<u8> = Vec::new();
+    let mut has_n_sulfate = false;
 
     for m in &res.modifications {
         let desc = &m.descriptor;
         if desc.contains("NSO") {
-            has_n_sulfo = true;
+            has_n_sulfate = true;
         }
         if desc.contains("OSO") {
-            o_sulfo_positions.push(m.position.0);
+            if m.position.0 <= 3 {
+                below_positions.push(m.position.0);
+            } else {
+                above_positions.push(m.position.0);
+            }
         }
     }
 
-    if o_sulfo_positions.is_empty() && !has_n_sulfo {
-        return String::new();
-    }
+    above_positions.sort();
+    above_positions.dedup();
+    below_positions.sort();
+    below_positions.dedup();
 
-    o_sulfo_positions.sort();
-    o_sulfo_positions.dedup();
-
-    let mut parts = Vec::new();
-    if has_n_sulfo {
-        if o_sulfo_positions.is_empty() {
-            // GlcNS with no O-sulfation → just "S" (NSquare implies N)
-            parts.push("S".to_string());
-        } else {
-            // GlcNS6S → "S6S"
-            parts.push("S".to_string());
-        }
+    let format_positions = |positions: Vec<u8>| {
+        positions
+            .into_iter()
+            .map(|position| format!("{position}S"))
+            .collect::<String>()
+    };
+    ModificationLabels {
+        above: format_positions(above_positions),
+        below: format!(
+            "{}{}",
+            if has_n_sulfate { "NS" } else { "" },
+            format_positions(below_positions)
+        ),
     }
-    for pos in &o_sulfo_positions {
-        parts.push(format!("{}S", pos));
-    }
-    parts.join("")
 }
 
 fn draw_shape(svg: &mut String, sym: &Symbol, cx: f64, cy: f64, r: f64, opts: &RenderOptions) {
@@ -2065,6 +2098,29 @@ mod tests {
     }
 
     #[test]
+    fn n_and_o_sulfated_glucosamine_uses_nsquare_and_positioned_o_sulfates() {
+        let g = parse(
+            "WURCS=2.0/2,2,1/[u2122h_2*NSO/3=O/3=O_6*OSO/3=O/3=O][a2121A-1a_1-5_2*OSO/3=O/3=O]/1-2/a4-b1",
+        );
+        let root = g.residue(g.root().unwrap()).unwrap();
+        let symbol = symbol_for(root).unwrap();
+        assert_eq!(symbol.shape, Shape::NSquare);
+
+        let svg = render_svg(&g).unwrap();
+        assert!(svg.contains("SNFG glycan: IdoA2S(a1-4)GlcNS6S"));
+        assert!(svg.contains(">6S</text>"));
+        assert!(svg.contains(">2S</text>"));
+        assert!(svg.contains(">NS</text>"));
+        assert!(!svg.contains(">S6S</text>"));
+        assert!(svg.contains("class=\"mod-label\""));
+        assert!(
+            svg.contains(
+                ".mod-label { font-family: Arial, Helvetica, sans-serif; font-size: 20px;"
+            )
+        );
+    }
+
+    #[test]
     fn render_symbol_svg_draws_one_shape_on_a_transparent_canvas() {
         let glc = crabwurcs_core::residue_from_kind(ResidueKind::Glc).unwrap();
         let svg = render_symbol_svg(&glc, &RenderOptions::default()).unwrap();
@@ -2148,6 +2204,17 @@ mod tests {
         let sym = symbol_for(res).unwrap();
         assert_eq!(sym.shape, Shape::Star);
         assert_eq!(sym.fill, "#F47920");
+    }
+
+    #[test]
+    fn lyx_absolute_configurations_use_yellow() {
+        for code in ["112", "221"] {
+            let g = parse(&format!("WURCS=2.0/1,1,0/[u{code}h]/1/"));
+            let symbol = symbol_for(g.residue(g.root().unwrap()).unwrap()).unwrap();
+            assert_eq!(symbol.shape, Shape::Star, "{code}");
+            assert_eq!(symbol.label, "Lyx", "{code}");
+            assert_eq!(symbol.fill, colour::YELLOW, "{code}");
+        }
     }
 
     #[test]
