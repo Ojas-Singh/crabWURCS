@@ -341,7 +341,7 @@ dependencies = [
 
 [[package]]
 name = "crabwurcs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crabwurcs-core",
  "crabwurcs-iupac",
@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "crabwurcs-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -363,7 +363,7 @@ dependencies = [
 
 [[package]]
 name = "crabwurcs-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hashbrown",
  "indexmap",
@@ -376,7 +376,7 @@ dependencies = [
 
 [[package]]
 name = "crabwurcs-iupac"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crabwurcs-core",
  "nom",
@@ -387,7 +387,7 @@ dependencies = [
 
 [[package]]
 name = "crabwurcs-mol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chematic",
  "crabwurcs-core",
@@ -398,7 +398,7 @@ dependencies = [
 
 [[package]]
 name = "crabwurcs-pdb"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crabwurcs-core",
  "pdbtbx",
@@ -411,7 +411,7 @@ dependencies = [
 
 [[package]]
 name = "crabwurcs-snfg"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crabwurcs-core",
  "crabwurcs-iupac",
