@@ -2,9 +2,10 @@
 
 RDKit is optional and is not required for the bundled GlycoShape molecular
 corpus. The default pure-Rust `chematic` backend recognizes equivalent SMILES
-graphs, reads/writes corpus-backed MOL/SDF, and performs conservative de-novo
-aldose, ketose, nonulosonic, pyranose, and furanose extraction. A lookup-free
-audit is semantically exact in both directions for all 938 bundled molecules,
+graphs, reads/writes MOL/SDF with standard V3000 atom and bond stereochemistry,
+parses structured WURCS MAP graphs, and performs de-novo aldose, ketose,
+nonulosonic, pyranose, furanose, and open-chain extraction. A lookup-free audit
+is semantically exact in both directions for all 938 bundled molecules,
 including WURCS → canonical SMILES → WURCS. This document concerns optional
 augmentation beyond that audited chemistry.
 

@@ -1,6 +1,6 @@
 use crabwurcs_core::{
     AnomericSymbol, CarbonPosition, Linkage, Modification, Monosaccharide, ResidueGraph,
-    RingClosure,
+    ResidueKind, RingClosure, residue_from_kind,
 };
 use pdbtbx::{
     ContainsAtomConformer, ContainsAtomConformerResidue, ContainsAtomConformerResidueChain,
@@ -28,57 +28,86 @@ pub struct ExtractedGlycan {
     pub graph: ResidueGraph,
 }
 
-const SUGAR_RESIDUE_NAMES: &[&str] = &[
-    "NAG", "NDG", "BMA", "MAN", "FUC", "GAL", "GLC", "SIA", "NGN", "XYS", "XYL", "RIP", "RIB",
-    "ARA", "LYX", "ALL", "ALT", "GUL", "IDO", "TAL", "GLA", "FRU", "SOR", "PSI", "TAG", "XYU",
-    "BGC", "BMX", "FCA", "FCB", "FUL", "GCU", "GCV", "G6D", "GIV", "GL0", "GNS", "GTR", "GXL",
-    "GYC", "GYG", "GYP", "GYS", "HSG", "HSQ", "HSY", "KDM", "KDO", "KDN", "L6S", "LAT", "LFR",
-    "MHS", "NGA", "NGC", "NGE", "NGS", "NM6", "OAA", "RAM", "SGA", "SGC", "SGD", "SGN", "SGS",
-    "SIB", "SID", "SLB", "SUS", "T6S", "XYP", "XXR", "Z0E", "ZB0", "ZB1", "A2G", "GCS", "BDP",
-    "IDR", "IDS", "RHM", "ARB", "GZL",
-];
+const PDB_COMPONENTS: &str = include_str!("../data/pdb_carbohydrate_components.tsv");
 
 fn is_sugar_residue(name: &str) -> bool {
-    SUGAR_RESIDUE_NAMES.contains(&name) || glycam_residue_kind(name).is_some()
+    pdb_component_residue(name).is_some() || glycam_residue_kind(name).is_some()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SugarKind {
-    Glc,
-    GlcNAc,
-    GlcN,
-    GlcA,
-    Qui,
-    Gal,
-    GalNAc,
-    GalA,
-    Man,
-    ManNAc,
-    Fuc,
-    Rha,
-    Ara,
-    Xyl,
-    Fru,
-    IdoA,
-    Gul,
-    Alt,
-    All,
-    Tal,
-    Rib,
-    Lyx,
-    Psi,
-    Sor,
-    Tag,
-    GalF,
-    Bac,
-    Kdo,
-    Neu5Ac,
-    Neu5Gc,
-    Kdn,
-    Unknown,
+fn apply_declared_form(
+    mut residue: Monosaccharide,
+    anomer: AnomericSymbol,
+    ring: Option<RingClosure>,
+) -> Monosaccharide {
+    residue.anomeric_symbol = anomer;
+    if let Some(ring) = ring {
+        residue.ring = ring;
+        let start = residue
+            .ring_start
+            .unwrap_or(residue.anomeric_position.max(1));
+        residue.ring_start = Some(start);
+        residue.ring_end = Some(match ring {
+            RingClosure::Furanose => start.saturating_add(3),
+            RingClosure::Pyranose => start.saturating_add(4),
+            RingClosure::Open => start,
+            RingClosure::Unknown => residue.ring_end.unwrap_or(start),
+        });
+    }
+    residue
 }
 
-fn glycam_residue_kind(name: &str) -> Option<(SugarKind, AnomericSymbol)> {
+fn pdb_component_residue(name: &str) -> Option<Monosaccharide> {
+    let fields = PDB_COMPONENTS
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
+        .find_map(|line| {
+            let mut fields = line.split('\t');
+            (fields.next()? == name).then(|| {
+                (
+                    fields.next().unwrap_or_default(),
+                    fields.next().unwrap_or("x"),
+                    fields.next().unwrap_or("x"),
+                    fields.next().unwrap_or("n"),
+                )
+            })
+        })?;
+    let kind = ResidueKind::from_name(fields.0)?;
+    let mut residue = residue_from_kind(kind).ok()?;
+    if fields.3 == "y" {
+        mirror_stereochemistry(&mut residue);
+    }
+    let anomer = match fields.1 {
+        "a" => AnomericSymbol::Alpha,
+        "b" => AnomericSymbol::Beta,
+        _ => AnomericSymbol::Unknown,
+    };
+    let ring = match fields.2 {
+        "p" => Some(RingClosure::Pyranose),
+        "f" => Some(RingClosure::Furanose),
+        _ => None,
+    };
+    Some(apply_declared_form(residue, anomer, ring))
+}
+
+fn mirror_stereochemistry(residue: &mut Monosaccharide) {
+    residue.skeleton_code = residue
+        .skeleton_code
+        .chars()
+        .map(|descriptor| match descriptor {
+            '1' => '2',
+            '2' => '1',
+            '3' => '4',
+            '4' => '3',
+            '5' => '6',
+            '6' => '5',
+            '7' => '8',
+            '8' => '7',
+            other => other,
+        })
+        .collect();
+}
+
+fn glycam_residue_kind(name: &str) -> Option<Monosaccharide> {
     let bytes = name.as_bytes();
     if bytes.len() != 3 || !b"0123456789ZYXWVUTSRQP".contains(&bytes[0]) {
         return None;
@@ -86,37 +115,37 @@ fn glycam_residue_kind(name: &str) -> Option<(SugarKind, AnomericSymbol)> {
     let middle = bytes[1] as char;
     let last = bytes[2] as char;
     let kind = match (middle, last) {
-        ('G' | 'g', 'L' | 'l') => SugarKind::Neu5Gc,
-        ('Y' | 'y', 'N' | 'n' | 'S' | 's') => SugarKind::GlcN,
-        ('K' | 'k', 'N' | 'n') => SugarKind::Kdn,
-        ('K' | 'k', 'O' | 'o') => SugarKind::Kdo,
-        ('B' | 'b', 'C' | 'c') => SugarKind::Bac,
-        ('Z' | 'z', _) => SugarKind::GlcA,
-        ('O' | 'o', _) => SugarKind::GalA,
-        ('U' | 'u', _) => SugarKind::IdoA,
-        ('C' | 'c', _) => SugarKind::Fru,
-        ('A' | 'a', _) => SugarKind::Ara,
-        ('H' | 'h', _) => SugarKind::Rha,
-        ('Q' | 'q', _) => SugarKind::Qui,
-        ('W' | 'w', _) => SugarKind::ManNAc,
-        ('K' | 'k', _) => SugarKind::Gul,
-        ('E' | 'e', _) => SugarKind::Alt,
-        ('N' | 'n', _) => SugarKind::All,
-        ('T' | 't', _) => SugarKind::Tal,
-        ('P' | 'p', 'D' | 'U') => SugarKind::Psi,
-        ('R' | 'r', 'D' | 'U') => SugarKind::Rib,
-        ('D' | 'd', 'A' | 'B') => SugarKind::Lyx,
-        ('J' | 'j', 'A' | 'B') => SugarKind::Tag,
-        ('b', 'A' | 'B') => SugarKind::Sor,
+        ('G' | 'g', 'L' | 'l') => ResidueKind::Neu5Gc,
+        ('Y' | 'y', 'N' | 'n' | 'S' | 's') => ResidueKind::GlcN,
+        ('K' | 'k', 'N' | 'n') => ResidueKind::Kdn,
+        ('K' | 'k', 'O' | 'o') => ResidueKind::Kdo,
+        ('B' | 'b', 'C' | 'c') => ResidueKind::Bac,
+        ('Z' | 'z', _) => ResidueKind::GlcA,
+        ('O' | 'o', _) => ResidueKind::GalA,
+        ('U' | 'u', _) => ResidueKind::IdoA,
+        ('C' | 'c', _) => ResidueKind::Fru,
+        ('A' | 'a', _) => ResidueKind::Ara,
+        ('H' | 'h', _) => ResidueKind::Rha,
+        ('Q' | 'q', _) => ResidueKind::Qui,
+        ('W' | 'w', _) => ResidueKind::ManNAc,
+        ('K' | 'k', _) => ResidueKind::Gul,
+        ('E' | 'e', _) => ResidueKind::Alt,
+        ('N' | 'n', _) => ResidueKind::All,
+        ('T' | 't', _) => ResidueKind::Tal,
+        ('P' | 'p', 'D' | 'U') => ResidueKind::Psi,
+        ('R' | 'r', 'D' | 'U') => ResidueKind::Rib,
+        ('D' | 'd', 'A' | 'B') => ResidueKind::Lyx,
+        ('J' | 'j', 'A' | 'B') => ResidueKind::Tag,
+        ('b', 'A' | 'B') => ResidueKind::Sor,
         _ => match middle {
-            'G' | 'g' => SugarKind::Glc,
-            'Y' | 'y' => SugarKind::GlcNAc,
-            'L' | 'l' => SugarKind::Gal,
-            'V' | 'v' => SugarKind::GalNAc,
-            'M' | 'm' => SugarKind::Man,
-            'F' | 'f' => SugarKind::Fuc,
-            'X' | 'x' => SugarKind::Xyl,
-            'S' | 's' => SugarKind::Neu5Ac,
+            'G' | 'g' => ResidueKind::Glc,
+            'Y' | 'y' => ResidueKind::GlcNAc,
+            'L' | 'l' => ResidueKind::Gal,
+            'V' | 'v' => ResidueKind::GalNAc,
+            'M' | 'm' => ResidueKind::Man,
+            'F' | 'f' => ResidueKind::Fuc,
+            'X' | 'x' => ResidueKind::Xyl,
+            'S' | 's' => ResidueKind::Neu5Ac,
             _ => return None,
         },
     };
@@ -125,45 +154,33 @@ fn glycam_residue_kind(name: &str) -> Option<(SugarKind, AnomericSymbol)> {
         'B' | 'U' => AnomericSymbol::Beta,
         'N' | 'S' | 'L' => AnomericSymbol::Alpha,
         'n' | 's' | 'l' => AnomericSymbol::Beta,
-        _ if matches!(kind, SugarKind::Bac | SugarKind::Kdo | SugarKind::Kdn) => {
+        _ if matches!(kind, ResidueKind::Bac | ResidueKind::Kdo | ResidueKind::Kdn) => {
             AnomericSymbol::Alpha
         }
         _ => return None,
     };
-    Some((kind, anomer))
-}
-
-fn pdb_residue_kind(name: &str) -> (SugarKind, AnomericSymbol) {
-    match name {
-        "NAG" => (SugarKind::GlcNAc, AnomericSymbol::Beta),
-        "NDG" => (SugarKind::GlcNAc, AnomericSymbol::Alpha),
-        "NGA" => (SugarKind::GalNAc, AnomericSymbol::Beta),
-        "A2G" => (SugarKind::GalNAc, AnomericSymbol::Alpha),
-        "BMA" => (SugarKind::Man, AnomericSymbol::Beta),
-        "MAN" => (SugarKind::Man, AnomericSymbol::Alpha),
-        "FUC" | "FCA" => (SugarKind::Fuc, AnomericSymbol::Alpha),
-        "FUL" | "FCB" => (SugarKind::Fuc, AnomericSymbol::Beta),
-        "GAL" => (SugarKind::Gal, AnomericSymbol::Beta),
-        "GLA" => (SugarKind::Gal, AnomericSymbol::Alpha),
-        "BGC" => (SugarKind::Glc, AnomericSymbol::Beta),
-        "GLC" => (SugarKind::Glc, AnomericSymbol::Alpha),
-        "BDP" | "GCU" => (SugarKind::GlcA, AnomericSymbol::Beta),
-        "IDR" | "IDS" => (SugarKind::IdoA, AnomericSymbol::Alpha),
-        "RAM" | "RHM" => (SugarKind::Rha, AnomericSymbol::Alpha),
-        "ARB" => (SugarKind::Ara, AnomericSymbol::Beta),
-        "GZL" => (SugarKind::GalF, AnomericSymbol::Beta),
-        "GCS" | "GNS" | "QYS" | "UYS" | "VYS" => (SugarKind::GlcN, AnomericSymbol::Alpha),
-        "FRU" => (SugarKind::Fru, AnomericSymbol::Beta),
-        "ARA" => (SugarKind::Ara, AnomericSymbol::Beta),
-        "SIA" | "SLB" | "SUS" => (SugarKind::Neu5Ac, AnomericSymbol::Alpha),
-        "SIB" | "SID" => (SugarKind::Neu5Ac, AnomericSymbol::Beta),
-        "NGN" | "NGC" => (SugarKind::Neu5Gc, AnomericSymbol::Alpha),
-        "KDN" => (SugarKind::Kdn, AnomericSymbol::Alpha),
-        "KDO" => (SugarKind::Kdo, AnomericSymbol::Alpha),
-        "XYS" => (SugarKind::Xyl, AnomericSymbol::Alpha),
-        "XYL" | "XYP" => (SugarKind::Xyl, AnomericSymbol::Beta),
-        _ => (SugarKind::Unknown, AnomericSymbol::Unknown),
+    let mut residue = residue_from_kind(kind).ok()?;
+    let registry_template_is_lowercase_glycam_form =
+        matches!(kind, ResidueKind::Ara | ResidueKind::Fuc | ResidueKind::Rha);
+    if (registry_template_is_lowercase_glycam_form && middle.is_ascii_uppercase())
+        || (!registry_template_is_lowercase_glycam_form
+            && middle.is_ascii_lowercase()
+            && !matches!(kind, ResidueKind::Neu5Ac | ResidueKind::Neu5Gc))
+    {
+        mirror_stereochemistry(&mut residue);
     }
+    let ring = matches!(last, 'D' | 'U').then_some(RingClosure::Furanose);
+    residue = apply_declared_form(residue, anomer, ring);
+    if matches!(last, 'S' | 's') {
+        if let Some(modification) = residue
+            .modifications
+            .iter_mut()
+            .find(|modification| modification.descriptor == "N")
+        {
+            modification.descriptor = "NSO/3=O/3=O".into();
+        }
+    }
+    Some(residue)
 }
 
 fn modification(position: u8, descriptor: &str) -> Modification {
@@ -175,131 +192,11 @@ fn modification(position: u8, descriptor: &str) -> Modification {
 }
 
 fn residue_to_monosaccharide(name: &str) -> Monosaccharide {
-    let pdb_kind = pdb_residue_kind(name);
-    let (kind, anomer) = if pdb_kind.0 != SugarKind::Unknown {
-        pdb_kind
-    } else {
-        glycam_residue_kind(name).unwrap_or(pdb_kind)
-    };
-    let l_isomer = if pdb_kind.0 != SugarKind::Unknown {
-        matches!(name, "FUC" | "FCA" | "FUL" | "FCB" | "RAM")
-    } else {
-        name.as_bytes().get(1).is_some_and(u8::is_ascii_lowercase)
-    };
-    let furanose_code = name
-        .as_bytes()
-        .get(2)
-        .is_some_and(|code| matches!(*code as char, 'D' | 'U'));
-    let ring = if kind == SugarKind::Bac {
-        RingClosure::Unknown
-    } else if matches!(
-        kind,
-        SugarKind::Fru | SugarKind::GalF | SugarKind::Rib | SugarKind::Psi
-    ) || (kind == SugarKind::Ara && furanose_code)
-    {
-        RingClosure::Furanose
-    } else {
-        RingClosure::Pyranose
-    };
-    let (prefix, skeleton, ring_start, ring_end, position, modifications) = match kind {
-        SugarKind::Glc => ("a", "2122h", 1, 5, 1, vec![]),
-        SugarKind::GlcNAc => ("a", "2122h", 1, 5, 1, vec![modification(2, "NCC/3=O")]),
-        SugarKind::GlcN => (
-            "a",
-            "2122h",
-            1,
-            5,
-            1,
-            vec![modification(
-                2,
-                if name.ends_with(['S', 's']) {
-                    "NSO/3=O/3=O"
-                } else {
-                    "N"
-                },
-            )],
-        ),
-        SugarKind::GlcA => ("a", "2122Ah", 1, 5, 1, vec![]),
-        SugarKind::Qui => ("a", "2122m", 1, 5, 1, vec![]),
-        SugarKind::Gal => ("a", "2112h", 1, 5, 1, vec![]),
-        SugarKind::GalNAc => ("a", "2112h", 1, 5, 1, vec![modification(2, "NCC/3=O")]),
-        SugarKind::GalA => ("a", "2112Ah", 1, 5, 1, vec![]),
-        SugarKind::Man => (
-            "a",
-            if l_isomer { "2211h" } else { "1122h" },
-            1,
-            5,
-            1,
-            vec![],
-        ),
-        SugarKind::ManNAc => ("a", "1122h", 1, 5, 1, vec![modification(2, "NCC/3=O")]),
-        SugarKind::Fuc => (
-            "a",
-            if l_isomer { "1221m" } else { "2112m" },
-            1,
-            5,
-            1,
-            vec![],
-        ),
-        SugarKind::Rha => (
-            "a",
-            if l_isomer { "2211m" } else { "1122m" },
-            1,
-            5,
-            1,
-            vec![],
-        ),
-        SugarKind::Ara => (
-            "a",
-            if name.as_bytes().get(1).is_some_and(u8::is_ascii_lowercase) {
-                "211h"
-            } else {
-                "122h"
-            },
-            1,
-            if furanose_code { 4 } else { 5 },
-            1,
-            vec![],
-        ),
-        SugarKind::Xyl => ("a", "212h", 1, 5, 1, vec![]),
-        SugarKind::Fru => ("ha", "122h", 2, 5, 2, vec![]),
-        SugarKind::IdoA => ("a", "2121Ah", 1, 5, 1, vec![]),
-        SugarKind::Gul => ("a", "1121h", 1, 5, 1, vec![]),
-        SugarKind::Alt => ("a", "2111h", 1, 5, 1, vec![]),
-        SugarKind::All => ("a", "2222h", 1, 5, 1, vec![]),
-        SugarKind::Tal => ("a", "2221h", 1, 5, 1, vec![]),
-        SugarKind::Rib => ("a", "222h", 1, 4, 1, vec![]),
-        SugarKind::Lyx => ("a", "221h", 1, 5, 1, vec![]),
-        SugarKind::Psi => ("ha", "222h", 2, 5, 2, vec![]),
-        SugarKind::Sor => ("ha", "121h", 2, 6, 2, vec![]),
-        SugarKind::Tag => ("ha", "112h", 2, 6, 2, vec![]),
-        SugarKind::GalF => ("a", "2112h", 1, 4, 1, vec![]),
-        SugarKind::Bac => (
-            "a",
-            "xxxxm",
-            1,
-            5,
-            1,
-            vec![modification(2, "NCC/3=O"), modification(4, "NCC/3=O")],
-        ),
-        SugarKind::Kdo => ("A", "1122h", 2, 6, 2, vec![]),
-        SugarKind::Neu5Ac => ("Aad", "21122h", 2, 6, 2, vec![modification(5, "NCC/3=O")]),
-        SugarKind::Neu5Gc => ("Aad", "21122h", 2, 6, 2, vec![modification(5, "NCCO/3=O")]),
-        SugarKind::Kdn => ("Aad", "21122h", 2, 6, 2, vec![]),
-        SugarKind::Unknown => ("a", "xxxxh", 1, 5, 1, vec![]),
-    };
-    Monosaccharide::new(
-        skeleton.chars().filter(char::is_ascii_digit).count() as u8,
-        skeleton.into(),
-        vec![],
-        ring,
-        Some(ring_start),
-        Some(ring_end),
-        position,
-        anomer,
-        prefix.into(),
-        modifications,
-    )
+    pdb_component_residue(name)
+        .or_else(|| glycam_residue_kind(name))
+        .unwrap_or_else(|| {
+            residue_from_kind(ResidueKind::Hex).expect("the generic hexose registry entry is valid")
+        })
 }
 
 pub fn extract_glycans_from_file(path: &std::path::Path) -> PdbResult<Vec<ExtractedGlycan>> {
@@ -403,6 +300,8 @@ fn extract_glycans_from_pdb(
     struct AtomMeta {
         residue: usize,
         name: String,
+        element: Option<String>,
+        charge: i8,
         position: [f64; 3],
     }
 
@@ -431,6 +330,11 @@ fn extract_glycans_from_pdb(
             AtomMeta {
                 residue: residue_key,
                 name: hierarchy.atom().name().to_string(),
+                element: hierarchy
+                    .atom()
+                    .element()
+                    .map(|element| element.symbol().to_string()),
+                charge: hierarchy.atom().charge().clamp(-8, 8) as i8,
                 position: [
                     hierarchy.atom().x(),
                     hierarchy.atom().y(),
@@ -441,10 +345,120 @@ fn extract_glycans_from_pdb(
         atoms_by_serial.insert(hierarchy.atom().serial_number(), atom_key);
     }
 
-    let sugar_keys = residues
+    let mut sugar_keys = residues
         .iter()
         .filter_map(|(key, residue)| is_sugar_residue(&residue.name).then_some(*key))
         .collect::<HashSet<_>>();
+    let mut inferred_residues = HashMap::<usize, Monosaccharide>::new();
+
+    // A component ID is authoritative when it is in the bundled CCD table.
+    // For renamed/private components, fall back to the actual atom graph. PDB
+    // files do not always carry intra-residue CONECT records, so conservative
+    // covalent-radius perception is used only inside one residue.
+    for key in residues
+        .keys()
+        .copied()
+        .filter(|key| !sugar_keys.contains(key))
+        .collect::<Vec<_>>()
+    {
+        let residue_atoms = atoms
+            .iter()
+            .filter(|(_, atom)| atom.residue == key)
+            .collect::<Vec<_>>();
+        let carbon_or_oxygen = residue_atoms
+            .iter()
+            .filter(|(_, atom)| matches!(atom.element.as_deref(), Some("C" | "O")))
+            .count();
+        if residue_atoms.len() < 5 || carbon_or_oxygen < 4 {
+            continue;
+        }
+        let mut input = crabwurcs_mol::MolecularGraphInput::default();
+        let mut atom_indices = HashMap::new();
+        for (index, (atom_key, atom)) in residue_atoms.iter().enumerate() {
+            let Some(element) = atom.element.as_deref() else {
+                continue;
+            };
+            atom_indices.insert(**atom_key, input.atoms.len());
+            input.atoms.push(crabwurcs_mol::MolecularAtom {
+                element: element.to_string(),
+                formal_charge: atom.charge,
+                coordinates: Some(atom.position),
+                stereo: crabwurcs_mol::InputStereo::Unspecified,
+            });
+            let _ = index;
+        }
+        if input.atoms.len() < 5 {
+            continue;
+        }
+        let radius = |symbol: &str| -> f64 {
+            match symbol {
+                "H" => 0.31,
+                "C" => 0.76,
+                "N" => 0.71,
+                "O" => 0.66,
+                "P" => 1.07,
+                "S" => 1.05,
+                "F" => 0.57,
+                "Cl" => 1.02,
+                _ => 0.8,
+            }
+        };
+        for left in 0..input.atoms.len() {
+            for right in left + 1..input.atoms.len() {
+                let left_source = residue_atoms
+                    .iter()
+                    .find(|(key, _)| atom_indices.get(key) == Some(&left))
+                    .map(|(_, atom)| atom);
+                let right_source = residue_atoms
+                    .iter()
+                    .find(|(key, _)| atom_indices.get(key) == Some(&right))
+                    .map(|(_, atom)| atom);
+                let (Some(left_source), Some(right_source)) = (left_source, right_source) else {
+                    continue;
+                };
+                let distance_squared = left_source
+                    .position
+                    .iter()
+                    .zip(right_source.position)
+                    .map(|(a, b)| (a - b).powi(2))
+                    .sum::<f64>();
+                let maximum =
+                    radius(&input.atoms[left].element) + radius(&input.atoms[right].element) + 0.35;
+                if !(0.45f64.powi(2)..=maximum.powi(2)).contains(&distance_squared) {
+                    continue;
+                }
+                let distance = distance_squared.sqrt();
+                let order = if matches!(
+                    (
+                        input.atoms[left].element.as_str(),
+                        input.atoms[right].element.as_str()
+                    ),
+                    ("C", "O") | ("O", "C")
+                ) && distance < 1.32
+                {
+                    crabwurcs_mol::MolecularBondOrder::Double
+                } else {
+                    crabwurcs_mol::MolecularBondOrder::Single
+                };
+                input.bonds.push(crabwurcs_mol::MolecularBond {
+                    atom1: left,
+                    atom2: right,
+                    order,
+                });
+            }
+        }
+        let Ok(graph) = crabwurcs_mol::wurcs_from_atom_graph(&input) else {
+            continue;
+        };
+        if graph.node_count() != 1 {
+            continue;
+        }
+        let Some(residue) = graph.root().and_then(|root| graph.residue(root)).cloned() else {
+            continue;
+        };
+        inferred_residues.insert(key, residue);
+        sugar_keys.insert(key);
+    }
     if sugar_keys.is_empty() {
         return Ok(vec![]);
     }
@@ -633,7 +647,10 @@ fn extract_glycans_from_pdb(
         let mut graph = ResidueGraph::new();
         let mut nodes = HashMap::new();
         for key in &ordered {
-            let mut residue = residue_to_monosaccharide(&residues[key].name);
+            let mut residue = inferred_residues
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| residue_to_monosaccharide(&residues[key].name));
             if let Some(positions) = sulfate_positions.get(key) {
                 let mut positions = positions.iter().copied().collect::<Vec<_>>();
                 positions.sort_unstable();
@@ -756,9 +773,15 @@ mod tests {
         y: f64,
         z: f64,
     ) -> String {
+        let element = atom_name
+            .chars()
+            .find(char::is_ascii_alphabetic)
+            .unwrap_or('C')
+            .to_ascii_uppercase()
+            .to_string();
         format!(
             "HETATM{:5} {:<4}{:1}{:3} {}{:4}{:1}   {:8.3}{:8.3}{:8.3}{:6.2}{:6.2}          {:>2}{:2}",
-            serial, atom_name, "", res_name, chain, seq, "", x, y, z, 1.0f64, 0.0f64, "C", ""
+            serial, atom_name, "", res_name, chain, seq, "", x, y, z, 1.0f64, 0.0f64, element, ""
         )
     }
 
@@ -812,18 +835,35 @@ mod tests {
         );
 
         let iduronate = residue_to_monosaccharide("IDR");
-        assert_eq!(iduronate.skeleton_code, "2121Ah");
+        assert_eq!(iduronate.skeleton_code, "2121A");
 
         assert_eq!(residue_to_monosaccharide("3hA").skeleton_code, "2211m");
         assert_eq!(residue_to_monosaccharide("3HA").skeleton_code, "1122m");
         assert_eq!(residue_to_monosaccharide("FUC").skeleton_code, "1221m");
-        assert_eq!(residue_to_monosaccharide("RHM").skeleton_code, "1122m");
+        assert!(!is_sugar_residue("RHM"));
         assert_eq!(residue_to_monosaccharide("XYS").skeleton_code, "212h");
         assert_eq!(
             residue_to_monosaccharide("XYS").anomeric_symbol,
             AnomericSymbol::Alpha
         );
         assert_eq!(residue_to_monosaccharide("8SA").anomeric_position, 2);
+    }
+
+    #[test]
+    fn every_bundled_ccd_component_has_a_concrete_registry_mapping() {
+        for line in PDB_COMPONENTS
+            .lines()
+            .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
+        {
+            let component = line.split('\t').next().unwrap();
+            let residue = pdb_component_residue(component)
+                .unwrap_or_else(|| panic!("missing bundled CCD mapping for {component}"));
+            assert!(
+                residue.residue_kind.is_some(),
+                "{component} lost its registry identity"
+            );
+            assert!(!residue.skeleton_code.contains('x'), "{component}");
+        }
     }
 
     #[test]
@@ -844,6 +884,42 @@ mod tests {
         let glycans = result.unwrap();
         assert_eq!(glycans.len(), 1);
         assert!(glycans[0].graph.node_count() >= 2);
+    }
+
+    #[test]
+    fn renamed_component_is_recognized_from_its_coordinate_graph() {
+        let atoms = [
+            ("O5", 1.400, 0.000, 0.000),
+            ("C1", 0.700, 1.212, 0.150),
+            ("C2", -0.700, 1.212, -0.150),
+            ("C3", -1.400, 0.000, 0.150),
+            ("C4", -0.700, -1.212, -0.150),
+            ("C5", 0.700, -1.212, 0.150),
+            ("O1", 1.400, 2.424, 0.650),
+            ("O2", -1.400, 2.424, -0.650),
+            ("O3", -2.800, 0.000, 0.650),
+            ("O4", -1.400, -2.424, -0.650),
+            ("C6", 1.450, -2.511, 0.350),
+            ("O6", 2.150, -3.723, 0.850),
+        ];
+        let mut lines = vec!["HEADER    PRIVATE CARBOHYDRATE".to_string()];
+        lines.extend(atoms.iter().enumerate().map(|(index, (name, x, y, z))| {
+            make_hetatm_line(index as u32 + 1, name, "ZZZ", "A", 1, *x, *y, *z)
+        }));
+        lines.push("END".into());
+
+        let glycans = extract_glycans_from_str(&(lines.join("\n") + "\n"), false).unwrap();
+        assert_eq!(glycans.len(), 1);
+        assert_eq!(glycans[0].graph.node_count(), 1);
+        assert_ne!(
+            glycans[0]
+                .graph
+                .residue(glycans[0].graph.root().unwrap())
+                .unwrap()
+                .display_name
+                .as_deref(),
+            Some("ZZZ")
+        );
     }
 
     #[test]

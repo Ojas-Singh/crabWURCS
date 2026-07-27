@@ -6,6 +6,8 @@ A pure-Rust toolkit for glycan notation conversion, chemical-structure interop, 
 
 - **Multi-format conversion**: Convert between WURCS, IUPAC (condensed/extended), GLYCAM, SMILES, MOL, and SDF formats
 - **Structure extraction**: Extract glycan structures from PDB and GLYCAM coordinate files
+- **Molecular chemistry**: Construct concrete WURCS backbones/MAP graphs and round-trip stereochemical SMILES or V3000 MOL/SDF without private metadata
+- **PDB component recognition**: Resolve bundled wwPDB CCD and GLYCAM residue IDs, with atom/coordinate-graph fallback for renamed components
 - **SNFG rendering**: Generate publication-quality SNFG (Symbol Nomenclature for Glycans) SVG or transparent 2× PNG graphics
 - **Lossless parsing**: Lossless WURCS 2.0 parsing with full support for ambiguous linkage positions
 - **Pure Rust**: No external C/C++ dependencies by default, with optional RDKit backend

@@ -12,6 +12,7 @@ categories.workspace = true
 
 [dependencies]
 crabwurcs-core = { workspace = true }
+crabwurcs-mol = { workspace = true }
 thiserror = { workspace = true }
 pdbtbx = { workspace = true }
 petgraph = { workspace = true }

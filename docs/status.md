@@ -19,8 +19,9 @@ The notation and drawing pipeline is working end to end with comprehensive test 
 - Every included notation is tested against every other output format
 
 ### Molecular Structure Support
-- **SMILES/MOL/SDF**: Pure-Rust molecular backend parses all 938 corpus molecules and canonicalizes them stably
-- **De novo construction**: Finite defined WURCS graphs not in the corpus are constructed as stereochemical molecular graphs
+- **SMILES/MOL/SDF**: Pure-Rust molecular backend parses all 938 corpus molecules, canonicalizes them stably, and stores atom/bond stereochemistry in standard V3000 `CFG` attributes
+- **De novo construction**: Finite defined WURCS graphs not in the corpus are constructed from backbone descriptors and structured MAP atom/bond graphs
+- **Concrete topology**: Cyclic glycans and exact-count repeats materialize as molecular graphs; compositions, probability/position ensembles, and variable repeats return typed errors
 - **Aglycone extraction**: Glycan structures can be extracted from single-bond aglycone attachments (e.g., methyl glycosides)
 
 ### Advanced Features
@@ -40,11 +41,12 @@ The notation and drawing pipeline is working end to end with comprehensive test 
 - Reconstructs real glycosidic graphs from `CONECT`/covalent records
 - Handles branches, furanoses, uronic acids, amino sugars, sialic acids
 - Supports O/N-sulfation, methylation, acetylation, and phosphocholine
+- Uses a generated, bundled CCD component table and a data-driven GLYCAM decoder; private component names fall back to coordinate/atom-graph recognition
 - Audit results: 1,863 exact semantic matches out of 1,886 GlycoShape PDB/GLYCAM files
 
 ## Remaining Major Work
 
-1. **Extend MolWURCS coverage**: Beyond the 938 verified GlycoShape molecules with additional MAP templates
+1. **Extend differential MolWURCS coverage**: Audit additional public registries beyond the 938 verified GlycoShape molecules
 2. **IUPAC completeness**: Add representations for undefined substituent fragments and complex nested/partial repeat semantics  
 3. **SNFG expansion**: Extend residue dictionary and canonical branch ordering against complete SNFG fixtures
 4. **Structure audit**: Expand beyond the current GlycoShape sample with explicit mmCIF fixtures for uncommon residues
@@ -52,9 +54,8 @@ The notation and drawing pipeline is working end to end with comprehensive test 
 ## Technical Notes
 
 ### Scope Limitations
-- Broader MAP chemistry beyond represented substituent families remains MolWURCS porting work
-- Polymeric or ambiguous WURCS constructs that don't denote one finite molecule are future work
-- Sugar discrimination beyond the 938-structure audit is ongoing
+- Ensemble-valued WURCS constructs deliberately do not collapse to an arbitrary molecule
+- Sugar discrimination beyond the bundled GlycoShape and pinned CCD audits is ongoing
 - Non-glycans return `NoGlycanFound`
 
 ### Toolchain

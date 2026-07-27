@@ -1,0 +1,63 @@
+# crabWURCS bundled wwPDB carbohydrate component map
+# Source: https://files.wwpdb.org/pub/pdb/data/monomers/components.cif.gz
+# Snapshot release: 2026-07-18
+# Source SHA-256: fc9b8f5aa60c8c22f9c707957fb4d8f98022af9ee7a07592ed87c15f044ed63d
+# Only CCD entries whose current chem_comp.type is a saccharide are included.
+# Regenerate with: cargo run -p crabwurcs-pdb --example regenerate_ccd_components -- components.cif.gz
+# Columns: component_id, crabwurcs_residue_kind, anomer(a|b|x), ring(p|f|x), mirror(y|n)
+A2G	GalNAc	a	p	n
+ABE	Abe	a	p	n
+ADA	GalA	a	p	n
+AHR	Ara	a	f	y
+ALL	All	b	p	n
+ARA	Ara	a	p	y
+ARB	Ara	b	p	y
+BDP	GlcA	b	p	n
+BEM	ManA	b	p	n
+BGC	Glc	b	p	n
+BMA	Man	b	p	n
+DIG	Dig	x	p	n
+FCA	Fuc	a	p	y
+FCB	Fuc	b	p	y
+FRU	Fru	b	f	n
+FUC	Fuc	a	p	n
+FUL	Fuc	b	p	n
+GAL	Gal	b	p	n
+GCS	GlcN	b	p	n
+GCU	GlcA	a	p	n
+GL0	Gul	b	p	n
+GLA	Gal	a	p	n
+GLC	Glc	a	p	n
+GMH	LDmanHep	a	p	n
+GNS	GlcN	a	p	n
+GUL	Gul	x	p	y
+GUP	Gul	a	p	y
+GZL	Gal	b	f	n
+IDR	IdoA	a	p	n
+IDS	IdoA	a	p	n
+KDN	Kdn	b	p	n
+KDO	Kdo	a	p	n
+LGU	GulA	a	p	y
+LXC	Xyl	b	p	y
+MAN	Man	a	p	n
+MAV	ManA	a	p	n
+MUR	Mur	b	p	n
+NAG	GlcNAc	b	p	n
+NDG	GlcNAc	a	p	n
+NGA	GalNAc	b	p	n
+NGC	Neu5Gc	a	p	n
+RAM	Rha	a	p	n
+RIB	Rib	a	f	n
+RIP	Rib	b	p	n
+SGN	GlcN	a	p	n
+SIA	Neu5Ac	a	p	n
+SID	Neu5Ac	x	p	n
+SLB	Neu5Ac	b	p	n
+SOR	Sor	x	p	n
+SUS	Neu5Ac	a	p	n
+TAG	Tag	x	p	n
+TYV	Tyv	a	p	n
+WOO	All	b	p	y
+XYL	Xyl	x	p	n
+XYP	Xyl	b	p	n
+XYS	Xyl	a	p	n

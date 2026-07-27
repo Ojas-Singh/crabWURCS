@@ -1938,18 +1938,43 @@ fn write_iupac_condensed_impl(graph: &ResidueGraph, preserve_source: bool) -> Iu
         return Ok(write_composition_with(graph, residue_to_iupac_name));
     }
     if !graph.undefined_modifications().is_empty() {
-        return Err(IupacError::UnsupportedToken(
-            "IUPAC export of an undefined substituent fragment is not implemented".into(),
-        ));
+        return Err(IupacError::UnrepresentableInFormat {
+            residue: "undefined substituent fragment".into(),
+            format: "IUPAC",
+        });
+    }
+    if let Some(modification) = graph
+        .inner()
+        .node_weights()
+        .flat_map(|residue| {
+            let registry_modifications = classify_residue(residue)
+                .and_then(|kind| residue_from_kind(kind).ok())
+                .map(|template| template.modifications)
+                .unwrap_or_default();
+            residue.modifications.iter().filter(move |modification| {
+                !iupac_modification_is_representable(&modification.descriptor)
+                    && !registry_modifications.iter().any(|registered| {
+                        registered.position == modification.position
+                            && registered.descriptor == modification.descriptor
+                    })
+            })
+        })
+        .next()
+    {
+        return Err(IupacError::UnrepresentableInFormat {
+            residue: format!("WURCS MAP {}", modification.descriptor),
+            format: "IUPAC",
+        });
     }
     if let Some(map_code) = inner
         .edge_weights()
         .filter_map(|linkage| linkage.map_code.as_deref())
         .find(|map_code| iupac_bridge_name(map_code).is_none())
     {
-        return Err(IupacError::UnsupportedToken(format!(
-            "WURCS MAP bridge {map_code} has no IUPAC representation"
-        )));
+        return Err(IupacError::UnrepresentableInFormat {
+            residue: format!("WURCS MAP bridge {map_code}"),
+            format: "IUPAC",
+        });
     }
 
     let root = graph
@@ -2035,6 +2060,16 @@ fn write_iupac_condensed_impl(graph: &ResidueGraph, preserve_source: bool) -> Iu
         };
     }
     Ok(result)
+}
+
+fn iupac_modification_is_representable(descriptor: &str) -> bool {
+    descriptor == "N"
+        || descriptor == "OC"
+        || descriptor == "OCC/3=O"
+        || descriptor.contains("NC")
+        || descriptor.contains("NSO")
+        || descriptor.contains("OSO")
+        || descriptor.contains("P^XOCCNC")
 }
 
 fn serialize_iupac_tree(
@@ -3424,6 +3459,19 @@ mod tests {
             write_iupac_condensed(&parse_iupac_extended(&extended).unwrap()).unwrap(),
             "Foo(?1-?)Hex"
         );
+    }
+
+    #[test]
+    fn arbitrary_wurcs_map_chemistry_has_a_typed_iupac_error() {
+        let graph =
+            crabwurcs_core::parse_wurcs("WURCS=2.0/1,1,0/[a2122h-1a_1-5_3*C=O]/1/").unwrap();
+        assert!(matches!(
+            write_iupac_condensed_canonical(&graph),
+            Err(IupacError::UnrepresentableInFormat {
+                format: "IUPAC",
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -3,10 +3,11 @@ use std::collections::{HashMap, HashSet};
 use chematic::core::{
     Atom, AtomIdx, BondOrder, Chirality, Element, Molecule, MoleculeBuilder, STEREO_H_SENTINEL,
 };
-use crabwurcs_core::{AnomericSymbol, Monosaccharide, ResidueGraph, RingClosure};
+use crabwurcs_core::{AnomericSymbol, Monosaccharide, RepeatCount, ResidueGraph, RingClosure};
 use petgraph::visit::EdgeRef;
 
-use crate::{MolError, MolResult};
+use crate::map::MapGraph;
+use crate::{MolError, MolResult, NonConcreteFeature};
 
 #[derive(Debug)]
 struct BuiltResidue {
@@ -14,7 +15,7 @@ struct BuiltResidue {
     descriptors: Vec<char>,
     primary_modification: Vec<Option<AtomIdx>>,
     anomeric_oxygen: AtomIdx,
-    ring_oxygen: AtomIdx,
+    ring_oxygen: Option<AtomIdx>,
     anomeric_position: usize,
 }
 
@@ -50,105 +51,60 @@ fn add_bond(
         .map_err(|error| MolError::UnsupportedChemistry(error.to_string()))
 }
 
-fn add_oxygen(builder: &mut MoleculeBuilder, atom: AtomIdx) -> MolResult<AtomIdx> {
+fn add_oxygen_with_order(
+    builder: &mut MoleculeBuilder,
+    atom: AtomIdx,
+    order: BondOrder,
+) -> MolResult<AtomIdx> {
     let oxygen = builder.add_atom(Atom::new(Element::O));
-    add_bond(builder, atom, oxygen, BondOrder::Single)?;
+    add_bond(builder, atom, oxygen, order)?;
     Ok(oxygen)
 }
 
-fn add_carboxyl(builder: &mut MoleculeBuilder, carbon: AtomIdx) -> MolResult<AtomIdx> {
-    let hydroxyl = add_oxygen(builder, carbon)?;
-    let carbonyl = builder.add_atom(Atom::new(Element::O));
-    add_bond(builder, carbon, carbonyl, BondOrder::Double)?;
-    Ok(hydroxyl)
-}
-
-fn add_sulfate(
-    builder: &mut MoleculeBuilder,
-    backbone: AtomIdx,
-    through_nitrogen: bool,
-) -> MolResult<AtomIdx> {
-    let primary = builder.add_atom(Atom::new(if through_nitrogen {
-        Element::N
+fn backbone_bond_order(left: char, right: char) -> BondOrder {
+    if left == 'K' || matches!(right, 'n' | 'N' | 'e' | 'z' | 'f' | 'E' | 'Z' | 'F' | 'K') {
+        BondOrder::Double
+    } else if matches!(right, 't' | 'T') {
+        BondOrder::Triple
     } else {
-        Element::O
-    }));
-    add_bond(builder, backbone, primary, BondOrder::Single)?;
-    let sulfur = builder.add_atom(Atom::new(Element::S));
-    add_bond(builder, primary, sulfur, BondOrder::Single)?;
-    for order in [BondOrder::Double, BondOrder::Double, BondOrder::Single] {
-        let oxygen = builder.add_atom(Atom::new(Element::O));
-        add_bond(builder, sulfur, oxygen, order)?;
+        BondOrder::Single
     }
-    Ok(primary)
 }
 
-fn add_n_acyl(
-    builder: &mut MoleculeBuilder,
-    backbone: AtomIdx,
-    glycolyl: bool,
-) -> MolResult<AtomIdx> {
-    let nitrogen = builder.add_atom(Atom::new(Element::N));
-    add_bond(builder, backbone, nitrogen, BondOrder::Single)?;
-    let carbonyl = builder.add_atom(Atom::new(Element::C));
-    add_bond(builder, nitrogen, carbonyl, BondOrder::Single)?;
-    let oxygen = builder.add_atom(Atom::new(Element::O));
-    add_bond(builder, carbonyl, oxygen, BondOrder::Double)?;
-    let side = builder.add_atom(Atom::new(Element::C));
-    add_bond(builder, carbonyl, side, BondOrder::Single)?;
-    if glycolyl {
-        add_oxygen(builder, side)?;
-    }
-    Ok(nitrogen)
-}
-
-fn add_oxygen_modification(
-    builder: &mut MoleculeBuilder,
-    backbone: AtomIdx,
-    descriptor: &str,
-) -> MolResult<AtomIdx> {
-    let oxygen = add_oxygen(builder, backbone)?;
-    match descriptor {
-        "OC" => {
-            let methyl = builder.add_atom(Atom::new(Element::C));
-            add_bond(builder, oxygen, methyl, BondOrder::Single)?;
+fn default_oxygen_bonds(descriptor: char, terminal: bool) -> MolResult<Vec<BondOrder>> {
+    use BondOrder::{Double, Single, Triple};
+    let bonds = match descriptor {
+        'm' | 'd' | 'n' | 't' => vec![],
+        'h' => vec![Single],
+        'c' => vec![Single, Single],
+        'C' => vec![Single; if terminal { 3 } else { 2 }],
+        '1' | '2' | '3' | '4' | 'x' => vec![Single; if terminal { 2 } else { 1 }],
+        '5' | '6' | '7' | '8' | 'X' => vec![Single; if terminal { 3 } else { 2 }],
+        'o' | 'O' | 'K' => vec![Double],
+        'A' => vec![Double, Single],
+        'N' => vec![Single; if terminal { 2 } else { 1 }],
+        'e' | 'z' | 'f' => terminal.then_some(Single).into_iter().collect(),
+        'E' | 'Z' | 'F' => vec![Single; if terminal { 2 } else { 1 }],
+        'T' => vec![Triple],
+        // Anomeric descriptors receive their ring and anomeric oxygens
+        // explicitly. `u`/`U` are retained for the common reducing-end
+        // convention and conservatively use one unspecified oxygen.
+        'a' => vec![Single, Single],
+        'u' | 'U' => vec![Single],
+        'Q' | '?' => {
+            return Err(MolError::InvalidSkeleton {
+                offset: 0,
+                message: format!("descriptor `{descriptor}` does not define atom valence"),
+            });
         }
-        "OCC/3=O" => {
-            let carbonyl = builder.add_atom(Atom::new(Element::C));
-            add_bond(builder, oxygen, carbonyl, BondOrder::Single)?;
-            let carbonyl_oxygen = builder.add_atom(Atom::new(Element::O));
-            add_bond(builder, carbonyl, carbonyl_oxygen, BondOrder::Double)?;
-            let methyl = builder.add_atom(Atom::new(Element::C));
-            add_bond(builder, carbonyl, methyl, BondOrder::Single)?;
+        other => {
+            return Err(MolError::InvalidSkeleton {
+                offset: 0,
+                message: format!("unknown carbon descriptor `{other}`"),
+            });
         }
-        "OP^XOCCNC/7C/7C/3O/3=O" => {
-            let phosphorus = builder.add_atom(Atom::new(Element::P));
-            add_bond(builder, oxygen, phosphorus, BondOrder::Single)?;
-            let phosphoryl = builder.add_atom(Atom::new(Element::O));
-            add_bond(builder, phosphorus, phosphoryl, BondOrder::Double)?;
-            add_oxygen(builder, phosphorus)?;
-            let bridge = builder.add_atom(Atom::new(Element::O));
-            add_bond(builder, phosphorus, bridge, BondOrder::Single)?;
-            let first = builder.add_atom(Atom::new(Element::C));
-            let second = builder.add_atom(Atom::new(Element::C));
-            let mut nitrogen = Atom::new(Element::N);
-            nitrogen.charge = 1;
-            let nitrogen = builder.add_atom(nitrogen);
-            add_bond(builder, bridge, first, BondOrder::Single)?;
-            add_bond(builder, first, second, BondOrder::Single)?;
-            add_bond(builder, second, nitrogen, BondOrder::Single)?;
-            for _ in 0..3 {
-                let methyl = builder.add_atom(Atom::new(Element::C));
-                add_bond(builder, nitrogen, methyl, BondOrder::Single)?;
-            }
-        }
-        _ => {
-            return Err(MolError::UnsupportedChemistry(format!(
-                "MAP `{descriptor}`"
-            )));
-        }
-    }
-    Ok(oxygen)
+    };
+    Ok(bonds)
 }
 
 fn add_modification(
@@ -156,16 +112,19 @@ fn add_modification(
     backbone: AtomIdx,
     descriptor: &str,
 ) -> MolResult<AtomIdx> {
-    match descriptor {
-        "NCC/3=O" => add_n_acyl(builder, backbone, false),
-        "NCCO/3=O" => add_n_acyl(builder, backbone, true),
-        "NSO/3=O/3=O" => add_sulfate(builder, backbone, true),
-        "OSO/3=O/3=O" => add_sulfate(builder, backbone, false),
-        value if value.starts_with('O') => add_oxygen_modification(builder, backbone, value),
-        _ => Err(MolError::UnsupportedChemistry(format!(
-            "MAP `{descriptor}`"
-        ))),
-    }
+    let graph = MapGraph::parse(&format!("*{descriptor}"))?;
+    let built = graph.build(builder)?;
+    let (attachment, order) =
+        built
+            .attachments
+            .get(&1)
+            .copied()
+            .ok_or_else(|| MolError::InvalidMap {
+                offset: 0,
+                message: "residue MAP has no primary attachment".into(),
+            })?;
+    add_bond(builder, backbone, attachment, order)?;
+    Ok(attachment)
 }
 
 fn inferred_ring_positions(residue: &Monosaccharide, carbon_count: usize) -> (usize, usize) {
@@ -199,29 +158,124 @@ fn effective_anomeric_position(residue: &Monosaccharide) -> usize {
     }
 }
 
-pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
-    if graph.is_composition()
-        || !graph.undefined_linkages().is_empty()
-        || !graph.undefined_modifications().is_empty()
-    {
+fn materialize_exact_repeat(graph: &ResidueGraph) -> MolResult<Option<ResidueGraph>> {
+    let repeats = graph
+        .inner()
+        .edge_references()
+        .filter(|edge| edge.weight().repeat.is_some())
+        .collect::<Vec<_>>();
+    if repeats.is_empty() {
+        return Ok(None);
+    }
+    if repeats.iter().any(|edge| {
+        matches!(
+            edge.weight().repeat,
+            Some(RepeatCount::Unknown | RepeatCount::Range { .. })
+        )
+    }) {
+        return Err(MolError::NonConcrete(NonConcreteFeature::VariableRepeat));
+    }
+    if repeats.len() != 1 {
         return Err(MolError::UnsupportedChemistry(
-            "compositions or undefined fragments".into(),
+            "multiple independent exact repeat units".into(),
+        ));
+    }
+    let repeat = repeats[0];
+    let count = match repeat.weight().repeat {
+        Some(RepeatCount::Exact(count)) if count > 0 => count as usize,
+        Some(RepeatCount::Exact(_)) => {
+            return Err(MolError::InvalidSkeleton {
+                offset: 0,
+                message: "an exact repeat count must be positive".into(),
+            });
+        }
+        _ => unreachable!(),
+    };
+    let repeat_edge = repeat.id();
+    let repeat_source = repeat.source();
+    let repeat_target = repeat.target();
+    let mut expanded = ResidueGraph::new();
+    let mut copies = Vec::with_capacity(count);
+    for _ in 0..count {
+        let mut nodes = HashMap::new();
+        for node in graph.inner().node_indices() {
+            let copied = expanded.add_residue(
+                graph
+                    .residue(node)
+                    .expect("source graph node has a residue")
+                    .clone(),
+            );
+            nodes.insert(node, copied);
+        }
+        copies.push(nodes);
+    }
+    for nodes in &copies {
+        for edge in graph.inner().edge_references() {
+            if edge.id() == repeat_edge {
+                continue;
+            }
+            let mut linkage = edge.weight().clone();
+            linkage.repeat = None;
+            expanded.add_linkage(nodes[&edge.source()], nodes[&edge.target()], linkage);
+        }
+    }
+    for index in 0..count.saturating_sub(1) {
+        let mut linkage = repeat.weight().clone();
+        linkage.repeat = None;
+        linkage.cyclic = false;
+        expanded.add_linkage(
+            copies[index][&repeat_source],
+            copies[index + 1][&repeat_target],
+            linkage,
+        );
+    }
+    if let Some(root) = graph.root() {
+        expanded.set_root(copies[0][&root]);
+    }
+    Ok(Some(expanded))
+}
+
+pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
+    if let Some(expanded) = materialize_exact_repeat(graph)? {
+        return construct_molecule(&expanded);
+    }
+    if graph.is_composition() {
+        return Err(MolError::NonConcrete(NonConcreteFeature::Composition));
+    }
+    if !graph.undefined_linkages().is_empty() {
+        return Err(MolError::NonConcrete(NonConcreteFeature::UndefinedLinkage));
+    }
+    if !graph.undefined_modifications().is_empty() {
+        return Err(MolError::NonConcrete(
+            NonConcreteFeature::UndefinedModification,
         ));
     }
 
-    let mut occupied_acceptors = HashSet::new();
+    let mut occupied_positions = HashSet::new();
     for edge in graph.inner().edge_references() {
         let linkage = edge.weight();
         if !linkage.parent_position_alternatives.is_empty()
             || !linkage.child_position_alternatives.is_empty()
-            || linkage.repeat.is_some()
-            || linkage.map_code.is_some()
         {
-            return Err(MolError::UnsupportedChemistry(
-                "ambiguous, repeating, or MAP-bridged linkages".into(),
+            return Err(MolError::NonConcrete(
+                NonConcreteFeature::AlternativeLinkagePosition,
             ));
         }
-        occupied_acceptors.insert((edge.source().index(), linkage.parent_position.0 as usize));
+        if linkage.parent_position.0 == 0 || linkage.child_position.0 == 0 {
+            return Err(MolError::NonConcrete(
+                NonConcreteFeature::UnknownLinkagePosition,
+            ));
+        }
+        if linkage.parent_probability.is_some() || linkage.child_probability.is_some() {
+            return Err(MolError::NonConcrete(
+                NonConcreteFeature::LinkageProbability,
+            ));
+        }
+        debug_assert!(linkage.repeat.is_none());
+        occupied_positions.insert((edge.source().index(), linkage.parent_position.0 as usize));
+        if linkage.map_code.is_some() {
+            occupied_positions.insert((edge.target().index(), linkage.child_position.0 as usize));
+        }
     }
 
     let mut builder = MoleculeBuilder::new();
@@ -277,59 +331,104 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
             };
             carbons.push(builder.add_atom(atom));
         }
-        for pair in carbons.windows(2) {
-            add_bond(&mut builder, pair[0], pair[1], BondOrder::Single)?;
+        for (offset, pair) in carbons.windows(2).enumerate() {
+            add_bond(
+                &mut builder,
+                pair[0],
+                pair[1],
+                backbone_bond_order(descriptors[offset], descriptors[offset + 1]),
+            )?;
         }
-
-        let (ring_start, ring_end) = inferred_ring_positions(residue, carbon_count);
-        if ring_start == 0 || ring_end > carbon_count || ring_start == ring_end {
-            return Err(MolError::UnsupportedChemistry(format!(
-                "ring {ring_start}-{ring_end} on {carbon_count}-carbon backbone"
-            )));
-        }
-        let ring_oxygen = builder.add_atom(Atom::new(Element::O));
-        add_bond(
-            &mut builder,
-            carbons[ring_start - 1],
-            ring_oxygen,
-            BondOrder::Single,
-        )?;
-        add_bond(
-            &mut builder,
-            carbons[ring_end - 1],
-            ring_oxygen,
-            BondOrder::Single,
-        )?;
 
         let mut primary_modification = vec![None; carbon_count];
-        let anomeric_oxygen = add_oxygen(&mut builder, carbons[anomeric_position - 1])?;
+        let open_chain = residue.ring == RingClosure::Open;
+        let (ring_start, ring_end) = inferred_ring_positions(residue, carbon_count);
+        if anomeric_position == 0 || anomeric_position > carbon_count {
+            return Err(MolError::InvalidSkeleton {
+                offset: 0,
+                message: format!(
+                    "anomeric position {anomeric_position} on {carbon_count}-carbon backbone"
+                ),
+            });
+        }
+        let ring_oxygen = if open_chain {
+            None
+        } else {
+            if ring_start == 0 || ring_end > carbon_count || ring_start == ring_end {
+                return Err(MolError::InvalidSkeleton {
+                    offset: 0,
+                    message: format!(
+                        "ring {ring_start}-{ring_end} on {carbon_count}-carbon backbone"
+                    ),
+                });
+            }
+            let oxygen = builder.add_atom(Atom::new(Element::O));
+            add_bond(
+                &mut builder,
+                carbons[ring_start - 1],
+                oxygen,
+                BondOrder::Single,
+            )?;
+            add_bond(
+                &mut builder,
+                carbons[ring_end - 1],
+                oxygen,
+                BondOrder::Single,
+            )?;
+            Some(oxygen)
+        };
+
+        let anomeric_oxygen = add_oxygen_with_order(
+            &mut builder,
+            carbons[anomeric_position - 1],
+            if open_chain {
+                BondOrder::Double
+            } else {
+                BondOrder::Single
+            },
+        )?;
         primary_modification[anomeric_position - 1] = Some(anomeric_oxygen);
-        primary_modification[ring_end - 1] = Some(ring_oxygen);
+        if let Some(ring_oxygen) = ring_oxygen {
+            primary_modification[ring_end - 1] = Some(ring_oxygen);
+        }
+        let mut consumed_modifications = vec![0usize; carbon_count];
+        if !open_chain {
+            consumed_modifications[ring_start - 1] += 1;
+            consumed_modifications[ring_end - 1] += 1;
+        }
+        consumed_modifications[anomeric_position - 1] += 1;
 
         let modifications = residue
             .modifications
             .iter()
-            .map(|modification| (modification.position.0 as usize, &modification.descriptor))
-            .collect::<HashMap<_, _>>();
+            .map(|modification| {
+                if modification.position.0 == 0 || modification.probability.is_some() {
+                    return Err(MolError::NonConcrete(
+                        NonConcreteFeature::UndefinedModification,
+                    ));
+                }
+                Ok((modification.position.0 as usize, &modification.descriptor))
+            })
+            .collect::<MolResult<HashMap<_, _>>>()?;
         for (offset, descriptor) in descriptors.iter().copied().enumerate() {
             let position = offset + 1;
-            if position == anomeric_position || position == ring_end {
-                continue;
-            }
             if let Some(map) = modifications.get(&position) {
-                primary_modification[offset] =
-                    Some(add_modification(&mut builder, carbons[offset], map)?);
-                continue;
+                let atom = add_modification(&mut builder, carbons[offset], map)?;
+                primary_modification[offset].get_or_insert(atom);
+                consumed_modifications[offset] += 1;
             }
-            if occupied_acceptors.contains(&(node.index(), position)) {
-                continue;
+            if occupied_positions.contains(&(node.index(), position)) {
+                consumed_modifications[offset] += 1;
             }
-            primary_modification[offset] = match descriptor {
-                '1' | '2' | 'x' | 'h' => Some(add_oxygen(&mut builder, carbons[offset])?),
-                'A' => Some(add_carboxyl(&mut builder, carbons[offset])?),
-                'm' | 'd' => None,
-                _ => None,
-            };
+            let terminal = offset == 0 || offset + 1 == carbon_count;
+            let default_bonds = default_oxygen_bonds(descriptor, terminal)?;
+            for order in default_bonds
+                .into_iter()
+                .skip(consumed_modifications[offset])
+            {
+                let oxygen = add_oxygen_with_order(&mut builder, carbons[offset], order)?;
+                primary_modification[offset].get_or_insert(oxygen);
+            }
         }
         built.insert(
             node.index(),
@@ -346,19 +445,93 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
 
     for edge in graph.inner().edge_references() {
         let linkage = edge.weight();
+        if let Some(map_code) = linkage.map_code.as_deref() {
+            let map = MapGraph::parse(map_code)?;
+            let emitted = map.build(&mut builder)?;
+            let parent_star = linkage.parent_modification_position.unwrap_or(1);
+            let child_star = linkage.child_modification_position.unwrap_or_else(|| {
+                if emitted.attachments.contains_key(&2) {
+                    2
+                } else {
+                    1
+                }
+            });
+            let (parent_atom, parent_order) = emitted
+                .attachments
+                .get(&parent_star)
+                .copied()
+                .ok_or_else(|| MolError::InvalidMap {
+                    offset: 0,
+                    message: format!("MAP has no parent attachment star {parent_star}"),
+                })?;
+            let (child_atom, child_order) = emitted
+                .attachments
+                .get(&child_star)
+                .copied()
+                .ok_or_else(|| MolError::InvalidMap {
+                    offset: 0,
+                    message: format!("MAP has no child attachment star {child_star}"),
+                })?;
+            let parent =
+                built
+                    .get(&edge.source().index())
+                    .ok_or_else(|| MolError::InvalidSkeleton {
+                        offset: 0,
+                        message: "missing parent residue".into(),
+                    })?;
+            let child =
+                built
+                    .get(&edge.target().index())
+                    .ok_or_else(|| MolError::InvalidSkeleton {
+                        offset: 0,
+                        message: "missing child residue".into(),
+                    })?;
+            let parent_carbon = *parent
+                .carbons
+                .get(linkage.parent_position.0 as usize - 1)
+                .ok_or_else(|| MolError::InvalidSkeleton {
+                    offset: 0,
+                    message: "parent linkage position is outside its backbone".into(),
+                })?;
+            let child_carbon = *child
+                .carbons
+                .get(linkage.child_position.0 as usize - 1)
+                .ok_or_else(|| MolError::InvalidSkeleton {
+                    offset: 0,
+                    message: "child linkage position is outside its backbone".into(),
+                })?;
+            add_bond(&mut builder, parent_carbon, parent_atom, parent_order)?;
+            add_bond(&mut builder, child_carbon, child_atom, child_order)?;
+            continue;
+        }
+        let child_position = linkage.child_position.0 as usize;
         let donor = built
             .get(&edge.target().index())
-            .ok_or_else(|| MolError::UnsupportedChemistry("missing donor residue".into()))?
-            .anomeric_oxygen;
-        let parent = built
-            .get_mut(&edge.source().index())
-            .ok_or_else(|| MolError::UnsupportedChemistry("missing acceptor residue".into()))?;
+            .and_then(|residue| {
+                residue
+                    .primary_modification
+                    .get(child_position.wrapping_sub(1))
+                    .copied()
+                    .flatten()
+            })
+            .ok_or_else(|| MolError::InvalidSkeleton {
+                offset: 0,
+                message: format!("missing donor modification at position {child_position}"),
+            })?;
+        let parent =
+            built
+                .get_mut(&edge.source().index())
+                .ok_or_else(|| MolError::InvalidSkeleton {
+                    offset: 0,
+                    message: "missing acceptor residue".into(),
+                })?;
         let position = linkage.parent_position.0 as usize;
         let carbon = *parent
             .carbons
             .get(position.wrapping_sub(1))
-            .ok_or_else(|| {
-                MolError::UnsupportedChemistry(format!("acceptor position {position}"))
+            .ok_or_else(|| MolError::InvalidSkeleton {
+                offset: 0,
+                message: format!("acceptor position {position}"),
             })?;
         add_bond(&mut builder, carbon, donor, BondOrder::Single)?;
         parent.primary_modification[position - 1] = Some(donor);
@@ -388,6 +561,9 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
         if builder.atom_at(residue.carbons[anomer]).chirality == Chirality::None {
             continue;
         }
+        let Some(ring_oxygen) = residue.ring_oxygen else {
+            continue;
+        };
         let previous = if anomer == 0 {
             STEREO_H_SENTINEL
         } else {
@@ -399,7 +575,7 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
                 previous,
                 residue.anomeric_oxygen.0,
                 residue.carbons[anomer + 1].0,
-                residue.ring_oxygen.0,
+                ring_oxygen.0,
             ],
         );
     }

@@ -4,11 +4,9 @@
 //! specified GlycoShape structures bundled with crabWURCS: 838 with source
 //! WURCS and 100 whose WURCS is derived from supplied IUPAC. SMILES are matched
 //! by canonical molecular graph, not by string spelling, so an equivalent
-//! traversal/order is accepted.  MOL and SDF records written here contain a
-//! crabWURCS canonical-SMILES provenance marker because chematic 0.4's MOL
-//! writer does not yet serialize all atom-centred SMILES stereochemistry as
-//! CTfile wedges/parity.  That marker makes crabWURCS's own file round-trip
-//! lossless while still producing a standards-shaped MOL/SDF record.
+//! traversal/order is accepted. MOL and SDF records use standard V3000 atom
+//! and bond `CFG` attributes, so molecular round-tripping does not depend on
+//! private comments or properties.
 //!
 //! Previously unseen glycans are extracted from their molecular graph, and
 //! finite defined WURCS graphs are constructed as real atom/bond graphs rather
@@ -17,7 +15,9 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use chematic::core::{AtomIdx, Chirality, Molecule, STEREO_H_SENTINEL};
+use chematic::core::{
+    Atom, AtomIdx, BondOrder, Chirality, Element, Molecule, MoleculeBuilder, STEREO_H_SENTINEL,
+};
 use chematic::mol::MolMetadata;
 use crabwurcs_core::{
     AnomericSymbol, CarbonPosition, Linkage, Modification, Monosaccharide, ResidueGraph,
@@ -26,11 +26,37 @@ use crabwurcs_core::{
 use thiserror::Error;
 
 mod construct;
+mod map;
 
 const SOURCE_CORPUS: &str = include_str!("../data/glycoshape_notations.tsv");
 const DERIVED_CORPUS: &str = include_str!("../data/glycoshape_derived_notations.tsv");
 const CANONICAL_INDEX: &str = include_str!("../data/glycoshape_canonical_smiles.tsv");
-const SMILES_MARKER: &str = "crabWURCS canonical-SMILES=";
+/// The reason a WURCS graph cannot denote one concrete molecular graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NonConcreteFeature {
+    Composition,
+    UndefinedLinkage,
+    UndefinedModification,
+    AlternativeLinkagePosition,
+    UnknownLinkagePosition,
+    LinkageProbability,
+    VariableRepeat,
+}
+
+impl std::fmt::Display for NonConcreteFeature {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
+            Self::Composition => "composition",
+            Self::UndefinedLinkage => "undefined linkage",
+            Self::UndefinedModification => "undefined modification",
+            Self::AlternativeLinkagePosition => "alternative linkage position",
+            Self::UnknownLinkagePosition => "unknown linkage position",
+            Self::LinkageProbability => "linkage probability",
+            Self::VariableRepeat => "variable or ranged repeat",
+        };
+        formatter.write_str(value)
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum MolError {
@@ -49,6 +75,18 @@ pub enum MolError {
     #[error("no glycan structure could be extracted from the input molecule")]
     NoGlycanFound,
 
+    #[error("WURCS does not specify one concrete molecule: {0}")]
+    NonConcrete(NonConcreteFeature),
+
+    #[error("invalid WURCS skeleton at byte {offset}: {message}")]
+    InvalidSkeleton { offset: usize, message: String },
+
+    #[error("invalid WURCS MAP at byte {offset}: {message}")]
+    InvalidMap { offset: usize, message: String },
+
+    #[error("chemically invalid valence: {0}")]
+    InvalidValence(String),
+
     #[error("WURCS chemistry is not yet constructible: {0}")]
     UnsupportedChemistry(String),
 
@@ -64,6 +102,229 @@ pub enum ChemFormat {
     Mol,
     Sdf,
     Smiles,
+}
+
+/// Tetrahedral information supplied by an atom/bond input adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InputStereo {
+    #[default]
+    Unspecified,
+    Clockwise,
+    CounterClockwise,
+}
+
+/// One atom in a format-neutral molecular graph.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MolecularAtom {
+    pub element: String,
+    pub formal_charge: i8,
+    pub coordinates: Option<[f64; 3]>,
+    pub stereo: InputStereo,
+}
+
+impl MolecularAtom {
+    pub fn new(element: impl Into<String>) -> Self {
+        Self {
+            element: element.into(),
+            formal_charge: 0,
+            coordinates: None,
+            stereo: InputStereo::Unspecified,
+        }
+    }
+}
+
+/// Bond order in a format-neutral molecular graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MolecularBondOrder {
+    Single,
+    Double,
+    Triple,
+    Aromatic,
+}
+
+/// One bond in a format-neutral molecular graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MolecularBond {
+    pub atom1: usize,
+    pub atom2: usize,
+    pub order: MolecularBondOrder,
+}
+
+/// Atom/bond input used by structure formats such as PDB that do not pass
+/// through a SMILES or CTfile parser.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MolecularGraphInput {
+    pub atoms: Vec<MolecularAtom>,
+    pub bonds: Vec<MolecularBond>,
+}
+
+fn graph_atom_stereo(input: &MolecularGraphInput, index: usize) -> InputStereo {
+    if input.atoms[index].stereo != InputStereo::Unspecified {
+        return input.atoms[index].stereo;
+    }
+    let Some(center) = input.atoms[index].coordinates else {
+        return InputStereo::Unspecified;
+    };
+    let incident = input
+        .bonds
+        .iter()
+        .filter_map(|bond| {
+            if bond.order != MolecularBondOrder::Single {
+                return None;
+            }
+            if bond.atom1 == index {
+                Some(bond.atom2)
+            } else if bond.atom2 == index {
+                Some(bond.atom1)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    let total_incident = input
+        .bonds
+        .iter()
+        .filter(|bond| bond.atom1 == index || bond.atom2 == index)
+        .count();
+    if incident.len() != total_incident || !(3..=4).contains(&incident.len()) {
+        return InputStereo::Unspecified;
+    }
+    let Some(mut points) = incident
+        .iter()
+        .map(|neighbor| input.atoms[*neighbor].coordinates)
+        .collect::<Option<Vec<_>>>()
+    else {
+        return InputStereo::Unspecified;
+    };
+    if points.len() == 3 {
+        // The missing fourth substituent is an implicit hydrogen. Its
+        // direction is approximated opposite the three normalized heavy-atom
+        // vectors, which is stable for ordinary tetrahedral PDB coordinates.
+        let mut direction = [0.0; 3];
+        for point in &points {
+            let vector = [
+                point[0] - center[0],
+                point[1] - center[1],
+                point[2] - center[2],
+            ];
+            let length = vector.iter().map(|value| value * value).sum::<f64>().sqrt();
+            if length < 1e-6 {
+                return InputStereo::Unspecified;
+            }
+            for axis in 0..3 {
+                direction[axis] -= vector[axis] / length;
+            }
+        }
+        points.push([
+            center[0] + direction[0],
+            center[1] + direction[1],
+            center[2] + direction[2],
+        ]);
+    }
+    let vector = |left: [f64; 3], right: [f64; 3]| {
+        [left[0] - right[0], left[1] - right[1], left[2] - right[2]]
+    };
+    let a = vector(points[0], points[3]);
+    let b = vector(points[1], points[3]);
+    let c = vector(points[2], points[3]);
+    let determinant = a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+        + a[2] * (b[0] * c[1] - b[1] * c[0]);
+    if determinant.abs() < 1e-5 {
+        InputStereo::Unspecified
+    } else if determinant.is_sign_positive() {
+        InputStereo::Clockwise
+    } else {
+        InputStereo::CounterClockwise
+    }
+}
+
+fn molecule_from_atom_graph(input: &MolecularGraphInput) -> MolResult<Molecule> {
+    let mut builder = MoleculeBuilder::new();
+    for (index, source) in input.atoms.iter().enumerate() {
+        let element = Element::from_symbol(&source.element).ok_or_else(|| {
+            MolError::ParseError(format!(
+                "atom {index} has unknown element `{}`",
+                source.element
+            ))
+        })?;
+        let mut atom = Atom::new(element);
+        atom.charge = source.formal_charge;
+        atom.chirality = match graph_atom_stereo(input, index) {
+            InputStereo::Unspecified => Chirality::None,
+            InputStereo::Clockwise => Chirality::Clockwise,
+            InputStereo::CounterClockwise => Chirality::CounterClockwise,
+        };
+        builder.add_atom(atom);
+    }
+    for (index, source) in input.bonds.iter().enumerate() {
+        if source.atom1 >= input.atoms.len() || source.atom2 >= input.atoms.len() {
+            return Err(MolError::ParseError(format!(
+                "bond {index} references an atom outside the graph"
+            )));
+        }
+        let order = match source.order {
+            MolecularBondOrder::Single => BondOrder::Single,
+            MolecularBondOrder::Double => BondOrder::Double,
+            MolecularBondOrder::Triple => BondOrder::Triple,
+            MolecularBondOrder::Aromatic => BondOrder::Aromatic,
+        };
+        builder
+            .add_bond(
+                AtomIdx(source.atom1 as u32),
+                AtomIdx(source.atom2 as u32),
+                order,
+            )
+            .map_err(|cause| MolError::ParseError(cause.to_string()))?;
+    }
+    for index in 0..input.atoms.len() {
+        if graph_atom_stereo(input, index) == InputStereo::Unspecified {
+            continue;
+        }
+        let neighbors = input
+            .bonds
+            .iter()
+            .filter_map(|bond| {
+                if bond.atom1 == index {
+                    Some(bond.atom2 as u32)
+                } else if bond.atom2 == index {
+                    Some(bond.atom1 as u32)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        if neighbors.len() == 3 {
+            builder.set_stereo_neighbor_order(
+                AtomIdx(index as u32),
+                neighbors
+                    .into_iter()
+                    .chain(std::iter::once(STEREO_H_SENTINEL))
+                    .collect(),
+            );
+        } else if neighbors.len() == 4 {
+            builder.set_stereo_neighbor_order(AtomIdx(index as u32), neighbors);
+        }
+    }
+    let molecule = builder.build();
+    let valence_errors = chematic::core::validate_valence(&molecule);
+    if !valence_errors.is_empty() {
+        return Err(MolError::InvalidValence(
+            valence_errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; "),
+        ));
+    }
+    Ok(molecule)
+}
+
+/// Extract WURCS from an in-memory atom/bond graph.
+///
+/// This is primarily the integration point for PDB/mmCIF importers. It applies
+/// the same corpus-independent recognizer as SMILES and MOL input.
+pub fn wurcs_from_atom_graph(input: &MolecularGraphInput) -> MolResult<ResidueGraph> {
+    wurcs_for_molecule(&molecule_from_atom_graph(input)?)
 }
 
 fn corpus_pairs() -> impl Iterator<Item = (&'static str, &'static str)> {
@@ -823,18 +1084,186 @@ fn wurcs_for_molecule(molecule: &Molecule) -> MolResult<ResidueGraph> {
     de_novo_wurcs_for_molecule(molecule)
 }
 
-fn marked_smiles(metadata: &MolMetadata) -> Option<&str> {
-    metadata.comment.strip_prefix(SMILES_MARKER)
+fn normalized_stereo_order(molecule: &Molecule, atom: AtomIdx) -> Vec<u32> {
+    let mut order = molecule
+        .neighbors(atom)
+        .map(|(neighbor, _)| neighbor.0)
+        .collect::<Vec<_>>();
+    order.sort_unstable();
+    if order.len() == 3 {
+        order.push(STEREO_H_SENTINEL);
+    }
+    order
 }
 
-fn graph_from_molecule_and_metadata(
-    molecule: &Molecule,
-    metadata: &MolMetadata,
-) -> MolResult<ResidueGraph> {
-    if let Some(smiles) = marked_smiles(metadata) {
-        return wurcs_for_molecule(&parse_smiles(smiles)?);
+fn permutation_is_odd(from: &[u32], to: &[u32]) -> bool {
+    if from.len() != to.len() {
+        return false;
     }
-    wurcs_for_molecule(molecule)
+    let Some(permutation) = to
+        .iter()
+        .map(|item| from.iter().position(|candidate| candidate == item))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return false;
+    };
+    let inversions = permutation
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            permutation[index + 1..]
+                .iter()
+                .filter(|other| value > *other)
+                .count()
+        })
+        .sum::<usize>();
+    inversions % 2 == 1
+}
+
+fn flip_chirality(chirality: Chirality) -> Chirality {
+    match chirality {
+        Chirality::Clockwise => Chirality::CounterClockwise,
+        Chirality::CounterClockwise => Chirality::Clockwise,
+        Chirality::None => Chirality::None,
+    }
+}
+
+/// Add V3000 atom CFG attributes which chematic currently preserves only in
+/// its in-memory SMILES model. CFG is expressed relative to ascending CTfile
+/// atom numbers, with the implicit hydrogen after explicit neighbours.
+fn write_stereo_mol(molecule: &Molecule, metadata: &MolMetadata) -> String {
+    let cfg = molecule
+        .atoms()
+        .filter_map(|(index, atom)| {
+            if atom.chirality == Chirality::None {
+                return None;
+            }
+            let normalized = normalized_stereo_order(molecule, index);
+            let chirality = molecule
+                .stereo_neighbor_order(index)
+                .filter(|order| order.len() == normalized.len())
+                .map_or(atom.chirality, |order| {
+                    if permutation_is_odd(order, &normalized) {
+                        flip_chirality(atom.chirality)
+                    } else {
+                        atom.chirality
+                    }
+                });
+            let value = match chirality {
+                Chirality::CounterClockwise => 1,
+                Chirality::Clockwise => 2,
+                Chirality::None => return None,
+            };
+            Some((index.0 + 1, value))
+        })
+        .collect::<HashMap<_, _>>();
+
+    let raw = chematic::mol::write_mol_v3000(molecule, metadata, &[]);
+    let mut in_atoms = false;
+    let mut output = String::with_capacity(raw.len() + cfg.len() * 6);
+    for line in raw.lines() {
+        if line == "M  V30 BEGIN ATOM" {
+            in_atoms = true;
+        } else if line == "M  V30 END ATOM" {
+            in_atoms = false;
+        }
+        output.push_str(line);
+        if in_atoms && !line.ends_with("BEGIN ATOM") {
+            let atom_number = line
+                .strip_prefix("M  V30 ")
+                .and_then(|payload| payload.split_whitespace().next())
+                .and_then(|value| value.parse::<u32>().ok());
+            if let Some(value) = atom_number.and_then(|number| cfg.get(&number)) {
+                output.push_str(&format!(" CFG={value}"));
+            }
+        }
+        output.push('\n');
+    }
+    output
+}
+
+fn ctfile_cfg(input: &str) -> (HashMap<u32, u8>, HashMap<u32, u8>) {
+    let mut in_atoms = false;
+    let mut in_bonds = false;
+    let mut atoms = HashMap::new();
+    let mut bonds = HashMap::new();
+    for line in input.lines() {
+        match line {
+            "M  V30 BEGIN ATOM" => {
+                in_atoms = true;
+                continue;
+            }
+            "M  V30 END ATOM" => {
+                in_atoms = false;
+                continue;
+            }
+            "M  V30 BEGIN BOND" => {
+                in_bonds = true;
+                continue;
+            }
+            "M  V30 END BOND" => {
+                in_bonds = false;
+                continue;
+            }
+            _ => {}
+        }
+        if !(in_atoms || in_bonds) {
+            continue;
+        }
+        let Some(payload) = line.strip_prefix("M  V30 ") else {
+            continue;
+        };
+        let mut fields = payload.split_whitespace();
+        let Some(index) = fields.next().and_then(|value| value.parse::<u32>().ok()) else {
+            continue;
+        };
+        let cfg = fields.find_map(|field| {
+            field
+                .strip_prefix("CFG=")
+                .and_then(|value| value.parse::<u8>().ok())
+        });
+        if let Some(cfg) = cfg {
+            if in_atoms {
+                atoms.insert(index - 1, cfg);
+            } else {
+                bonds.insert(index - 1, cfg);
+            }
+        }
+    }
+    (atoms, bonds)
+}
+
+fn apply_ctfile_cfg(
+    molecule: &Molecule,
+    atom_cfg: &HashMap<u32, u8>,
+    bond_cfg: &HashMap<u32, u8>,
+) -> Molecule {
+    if atom_cfg.is_empty() && bond_cfg.is_empty() {
+        return molecule.clone();
+    }
+    let mut builder = MoleculeBuilder::new();
+    for (index, atom) in molecule.atoms() {
+        let mut atom = atom.clone();
+        atom.chirality = match atom_cfg.get(&index.0) {
+            Some(1) => Chirality::CounterClockwise,
+            Some(2) => Chirality::Clockwise,
+            _ => atom.chirality,
+        };
+        builder.add_atom(atom);
+    }
+    for (index, bond) in molecule.bonds() {
+        let order = match bond_cfg.get(&index.0) {
+            Some(1) => BondOrder::Up,
+            Some(6) => BondOrder::Down,
+            _ => bond.order,
+        };
+        let _ = builder.add_bond(bond.atom1, bond.atom2, order);
+    }
+    for atom in atom_cfg.keys().copied() {
+        let index = AtomIdx(atom);
+        builder.set_stereo_neighbor_order(index, normalized_stereo_order(molecule, index));
+    }
+    builder.build()
 }
 
 fn parse_mol_record(input: &str) -> MolResult<(Molecule, MolMetadata)> {
@@ -847,7 +1276,9 @@ fn parse_mol_record(input: &str) -> MolResult<(Molecule, MolMetadata)> {
     } else {
         chematic::mol::parse_mol(input)
     };
-    result.map_err(|error| MolError::ParseError(error.to_string()))
+    let (molecule, metadata) = result.map_err(|error| MolError::ParseError(error.to_string()))?;
+    let (atom_cfg, bond_cfg) = ctfile_cfg(input);
+    Ok((apply_ctfile_cfg(&molecule, &atom_cfg, &bond_cfg), metadata))
 }
 
 fn split_sdf_records(input: &str) -> Vec<&str> {
@@ -864,16 +1295,16 @@ pub fn wurcs_from_molecule(input: &str, format: ChemFormat) -> MolResult<Residue
     match format {
         ChemFormat::Smiles => wurcs_for_molecule(&parse_smiles(input)?),
         ChemFormat::Mol => {
-            let (molecule, metadata) = parse_mol_record(input)?;
-            graph_from_molecule_and_metadata(&molecule, &metadata)
+            let (molecule, _) = parse_mol_record(input)?;
+            wurcs_for_molecule(&molecule)
         }
         ChemFormat::Sdf => {
             let records = split_sdf_records(input);
             if records.len() != 1 {
                 return Err(MolError::SdfRecordCount(records.len()));
             }
-            let (molecule, metadata) = parse_mol_record(records[0])?;
-            graph_from_molecule_and_metadata(&molecule, &metadata)
+            let (molecule, _) = parse_mol_record(records[0])?;
+            wurcs_for_molecule(&molecule)
         }
     }
 }
@@ -894,16 +1325,16 @@ pub fn wurcs_from_molecules(input: &str, format: ChemFormat) -> MolResult<Vec<Re
     records
         .into_iter()
         .map(|record| {
-            let (molecule, metadata) = parse_mol_record(record)?;
-            graph_from_molecule_and_metadata(&molecule, &metadata)
+            let (molecule, _) = parse_mol_record(record)?;
+            wurcs_for_molecule(&molecule)
         })
         .collect()
 }
 
 /// Serialize a WURCS graph to a chemical structure.
 ///
-/// MOL/SDF output embeds canonical SMILES in the comment header so this crate
-/// can recover complete atom-centred stereochemistry on a later read.
+/// MOL/SDF output writes atom and bond stereochemistry into standard CTfile
+/// V3000 `CFG` attributes.
 pub fn molecule_from_wurcs(graph: &ResidueGraph, format: ChemFormat) -> MolResult<String> {
     let wurcs = write_wurcs(graph)?;
     let molecule = if let Some(smiles) = corpus_smiles_for_wurcs(&wurcs) {
@@ -916,11 +1347,10 @@ pub fn molecule_from_wurcs(graph: &ResidueGraph, format: ChemFormat) -> MolResul
         return Ok(smiles);
     }
 
-    let canonical = canonical_smiles(&molecule);
     let metadata = MolMetadata::default()
         .with_name("crabWURCS glycan")
-        .with_comment(&format!("{SMILES_MARKER}{canonical}"));
-    let mol = chematic::mol::write_mol(&molecule, &metadata);
+        .with_comment("generated by crabWURCS");
+    let mol = write_stereo_mol(&molecule, &metadata);
     Ok(match format {
         ChemFormat::Mol => mol,
         ChemFormat::Sdf => format!("{mol}$$$$\n"),
@@ -1110,11 +1540,142 @@ mod tests {
     }
 
     #[test]
+    fn every_concrete_registry_residue_constructs_without_a_corpus_lookup() {
+        let mut failures = Vec::new();
+        for kind in crabwurcs_core::ResidueKind::ALL {
+            if kind.is_generic() || kind.unique_residue().is_none() {
+                continue;
+            }
+            let residue = crabwurcs_core::residue_from_kind(*kind).unwrap();
+            let mut graph = ResidueGraph::new();
+            let root = graph.add_residue(residue);
+            graph.set_root(root);
+            if let Err(error) = construct::construct_molecule(&graph) {
+                failures.push(format!("{}: {error}", kind.canonical_name()));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "registry construction failures:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    #[test]
+    fn general_map_constructor_handles_residue_and_bridge_graphs() {
+        let wurcs = "WURCS=2.0/3,3,2/[a261m-1a_1-4_3*C=O][a1211h-1a_1-5_2*NC][a222h-1b_1-4_1*N]/1-2-3/a2-b1_b3-c5*OPO*/3O/3=O";
+        let graph = parse_wurcs(wurcs).unwrap();
+        let molecule = construct::construct_molecule(&graph).unwrap();
+        let smiles = canonical_smiles(&molecule);
+        assert!(smiles.contains('P'), "{smiles}");
+        assert!(smiles.contains('N'), "{smiles}");
+    }
+
+    #[test]
+    fn open_chain_backbones_emit_a_carbonyl_without_a_ring_bond() {
+        let mut graph = parse_wurcs("WURCS=2.0/1,1,0/[a2122h-1a_1-5]/1/").unwrap();
+        let root = graph.root().unwrap();
+        let residue = graph.residue_mut(root).unwrap();
+        residue.ring = RingClosure::Open;
+        residue.ring_start = None;
+        residue.ring_end = None;
+        residue.anomeric_symbol = AnomericSymbol::Unknown;
+
+        let molecule = construct::construct_molecule(&graph).unwrap();
+        let smiles = canonical_smiles(&molecule);
+        assert!(smiles.contains("=O"), "{smiles}");
+        assert_eq!(molecule.bond_count() + 1, molecule.atom_count());
+    }
+
+    #[test]
+    fn atom_graph_adapter_perceives_coordinate_stereochemistry() {
+        let mut input = MolecularGraphInput {
+            atoms: vec![
+                MolecularAtom {
+                    element: "C".into(),
+                    formal_charge: 0,
+                    coordinates: Some([0.0, 0.0, 0.0]),
+                    stereo: InputStereo::Unspecified,
+                },
+                MolecularAtom::new("F"),
+                MolecularAtom::new("Cl"),
+                MolecularAtom::new("Br"),
+                MolecularAtom::new("I"),
+            ],
+            bonds: (1..=4)
+                .map(|neighbor| MolecularBond {
+                    atom1: 0,
+                    atom2: neighbor,
+                    order: MolecularBondOrder::Single,
+                })
+                .collect(),
+        };
+        for (atom, coordinates) in input.atoms[1..].iter_mut().zip([
+            [1.0, 1.0, 1.0],
+            [-1.0, -1.0, 1.0],
+            [-1.0, 1.0, -1.0],
+            [1.0, -1.0, -1.0],
+        ]) {
+            atom.coordinates = Some(coordinates);
+        }
+        let first = molecule_from_atom_graph(&input).unwrap();
+        assert_ne!(first.atom(AtomIdx(0)).chirality, Chirality::None);
+
+        input.atoms.swap(1, 2);
+        input.bonds = (1..=4)
+            .map(|neighbor| MolecularBond {
+                atom1: 0,
+                atom2: neighbor,
+                order: MolecularBondOrder::Single,
+            })
+            .collect();
+        let reflected = molecule_from_atom_graph(&input).unwrap();
+        assert_ne!(
+            first.atom(AtomIdx(0)).chirality,
+            reflected.atom(AtomIdx(0)).chirality
+        );
+    }
+
+    #[test]
+    fn exact_repeats_materialize_and_variable_repeats_are_typed_errors() {
+        let exact = parse_wurcs("WURCS=2.0/2,2,2/[a2122h-1a_1-5][a2122h-1b_1-5]/1-2/a4-b1_a1-b4~3")
+            .unwrap();
+        let molecule = construct::construct_molecule(&exact).unwrap();
+        assert!(molecule.atom_count() > 60);
+
+        let variable =
+            parse_wurcs("WURCS=2.0/2,2,2/[a2122h-1a_1-5][a2122h-1b_1-5]/1-2/a4-b1_a1-b4~n")
+                .unwrap();
+        assert!(matches!(
+            construct::construct_molecule(&variable),
+            Err(MolError::NonConcrete(NonConcreteFeature::VariableRepeat))
+        ));
+    }
+
+    #[test]
+    fn ensemble_wurcs_returns_typed_non_concrete_errors() {
+        let composition = parse_wurcs("WURCS=2.0/1,2,0+/[a2122h-1x_1-5]/1-1/").unwrap();
+        assert!(matches!(
+            construct::construct_molecule(&composition),
+            Err(MolError::NonConcrete(NonConcreteFeature::Composition))
+        ));
+
+        let ambiguous = parse_wurcs("WURCS=2.0/1,2,1/[a2122h-1x_1-5]/1-1/a3|a4-b1").unwrap();
+        assert!(matches!(
+            construct::construct_molecule(&ambiguous),
+            Err(MolError::NonConcrete(
+                NonConcreteFeature::AlternativeLinkagePosition
+            ))
+        ));
+    }
+
+    #[test]
     fn corpus_graph_roundtrips_through_mol_and_sdf() {
         let graph = parse_wurcs(WURCS).unwrap();
         for format in [ChemFormat::Mol, ChemFormat::Sdf] {
             let chemical = molecule_from_wurcs(&graph, format).unwrap();
-            assert!(chemical.contains(SMILES_MARKER));
+            assert!(!chemical.contains("canonical-SMILES"));
+            assert!(chemical.contains(" CFG="));
             let recovered = wurcs_from_molecule(&chemical, format).unwrap();
             assert_eq!(write_wurcs(&recovered).unwrap(), WURCS);
         }
