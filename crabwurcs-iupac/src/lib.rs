@@ -2693,7 +2693,10 @@ pub fn parse_glycam(input: &str) -> IupacResult<ResidueGraph> {
     // literal sequence.  Resolve the identifiers present in the bundled
     // GlycoShape corpus; callers should prefer literal GLYCAM for portability.
     cleaned = cleaned.replace("[2,4-diacetimido-2,4,6-trideoxyhexose]", "DHex2NAc4NAc6d");
-    let reducing_end = regex::Regex::new(r"(?P<anom>[ab?])(?P<position>[0-9?]+)-OH$")
+    // GlycoShape uses `aNone-OH`/`bNone-OH` when its source record omitted
+    // the reducing-end carbon number. Accept that spelling and infer the
+    // conventional anomeric carbon from the parsed residue below.
+    let reducing_end = regex::Regex::new(r"(?P<anom>[ab?])(?P<position>[0-9?]+|None)-OH$")
         .expect("GLYCAM reducing-end regex")
         .captures(&cleaned)
         .map(|captures| {
@@ -2702,10 +2705,16 @@ pub fn parse_glycam(input: &str) -> IupacResult<ResidueGraph> {
                 "b" => AnomericSymbol::Beta,
                 _ => AnomericSymbol::Unknown,
             };
+            let infer_position = &captures["position"] == "None";
             let position = captures["position"].parse::<u8>().unwrap_or(0);
-            (captures.get(0).unwrap().start(), symbol, position)
+            (
+                captures.get(0).unwrap().start(),
+                symbol,
+                position,
+                infer_position,
+            )
         });
-    if let Some((start, _, _)) = reducing_end {
+    if let Some((start, _, _, _)) = reducing_end {
         cleaned.truncate(start);
     }
     let cleaned = match cleaned.as_str() {
@@ -2754,8 +2763,19 @@ pub fn parse_glycam(input: &str) -> IupacResult<ResidueGraph> {
         })
         .to_string();
     let mut graph = parse_iupac_condensed(&condensed)?;
-    if let (Some(root), Some((_, symbol, position))) = (graph.root(), reducing_end) {
+    if let (Some(root), Some((_, symbol, position, infer_position))) = (graph.root(), reducing_end)
+    {
         if let Some(residue) = graph.residue_mut(root) {
+            let position = if infer_position
+                && (residue.anomeric_prefix.starts_with('A')
+                    || residue.anomeric_prefix.starts_with('h'))
+            {
+                2
+            } else if infer_position {
+                1
+            } else {
+                position
+            };
             residue.anomeric_symbol = symbol;
             residue.anomeric_position = position;
             if symbol != AnomericSymbol::Unknown {
@@ -3163,6 +3183,32 @@ mod tests {
         let accession = parse_iupac_condensed("G60371D-N").unwrap();
         assert_eq!(accession.node_count(), 23);
         assert_eq!(accession.edge_count(), 22);
+    }
+
+    #[test]
+    fn glycoshape_reducing_end_variants_write_canonical_wurcs() {
+        let galnac = parse_glycam("DGalpNAcb1-4DGlcpAb1-3DGalpNAca1-OH").unwrap();
+        assert_eq!(
+            crabwurcs_core::write_wurcs(&galnac).unwrap(),
+            "WURCS=2.0/3,3,2/[a2112h-1a_1-5_2*NCC/3=O][a2122A-1b_1-5][a2112h-1b_1-5_2*NCC/3=O]/1-2-3/a3-b1_b4-c1"
+        );
+
+        for (suffix, expected) in [
+            ("aNone-OH", AnomericSymbol::Alpha),
+            ("bNone-OH", AnomericSymbol::Beta),
+        ] {
+            let graph = parse_glycam(&format!("G50508SG{suffix}")).unwrap();
+            let root = graph.root().unwrap();
+            let residue = graph.residue(root).unwrap();
+            assert_eq!(residue.anomeric_position, 1);
+            assert_eq!(residue.anomeric_symbol, expected);
+
+            let wurcs = crabwurcs_core::write_wurcs(&graph).unwrap();
+            assert!(
+                wurcs.contains(&format!("[a2122h-1{}_1-5_2*NCC/3=O]", expected.to_char())),
+                "{wurcs}"
+            );
+        }
     }
 
     #[test]

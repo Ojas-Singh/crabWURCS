@@ -473,7 +473,7 @@ fn parse_single_residue(input: &str) -> Monosaccharide {
     let (anomeric_prefix, rest) = parse_anomeric_prefix(header_part);
     let (backbone, ring_char, rest_after_ring) = parse_backbone_and_ring(rest);
 
-    let (anomeric_pos, anomeric_sym) =
+    let (mut anomeric_pos, mut anomeric_sym) =
         if let Some(rest_after_dash) = rest_after_ring.strip_prefix('-') {
             let (pos, sym, _rest) = parse_anomeric_info(rest_after_dash);
             (pos, sym)
@@ -484,8 +484,29 @@ fn parse_single_residue(input: &str) -> Monosaccharide {
     let mut ring_start: Option<u8> = None;
     let mut ring_end: Option<u8> = None;
     let mut mod_start_idx = 1usize;
+    let mut modifications = Vec::new();
 
-    if parts.len() > 1 {
+    // Some legacy GlycoShape alpha/beta records misplaced the anomeric
+    // declaration between a modification position and its descriptor:
+    //
+    //   a2122h_2-1a_1-5*NCC/3=O
+    //
+    // The intended, canonical unique residue is:
+    //
+    //   a2122h-1a_1-5_2*NCC/3=O
+    //
+    // Recover this narrowly identifiable form so conversion does not silently
+    // erase either the reducing-end anomer or its modification.
+    if anomeric_pos == 0
+        && let Some((pos, sym, start, end, modification)) = parse_legacy_misplaced_anomer(&parts)
+    {
+        anomeric_pos = pos;
+        anomeric_sym = sym;
+        ring_start = Some(start);
+        ring_end = Some(end);
+        modifications.push(modification);
+        mod_start_idx = 3;
+    } else if parts.len() > 1 {
         let second = parts[1];
         if !second.contains('*')
             && (second.contains('-')
@@ -514,7 +535,6 @@ fn parse_single_residue(input: &str) -> Monosaccharide {
         RingClosure::Unknown
     };
 
-    let mut modifications = Vec::new();
     for part in parts.iter().skip(mod_start_idx) {
         if let Some((location, desc)) = part.split_once('*') {
             if let Some((pos, probability)) = parse_modification_location(location) {
@@ -550,6 +570,40 @@ fn parse_single_residue(input: &str) -> Monosaccharide {
         display_name: None,
         residue_kind: None,
     }
+}
+
+fn parse_legacy_misplaced_anomer(
+    parts: &[&str],
+) -> Option<(u8, AnomericSymbol, u8, u8, Modification)> {
+    let (modification_location, anomeric_info) = parts.get(1)?.split_once('-')?;
+    let (anomeric_position, anomeric_symbol, remaining) = parse_anomeric_info(anomeric_info);
+    if anomeric_position == 0
+        || !matches!(
+            anomeric_symbol,
+            AnomericSymbol::Alpha | AnomericSymbol::Beta
+        )
+        || !remaining.is_empty()
+    {
+        return None;
+    }
+
+    let (ring, descriptor) = parts.get(2)?.split_once('*')?;
+    let (ring_start, ring_end) = ring.split_once('-')?;
+    let ring_start = ring_start.parse().ok()?;
+    let ring_end = ring_end.parse().ok()?;
+    let (position, probability) = parse_modification_location(modification_location)?;
+
+    Some((
+        anomeric_position,
+        anomeric_symbol,
+        ring_start,
+        ring_end,
+        Modification {
+            position: CarbonPosition(position),
+            descriptor: descriptor.to_string(),
+            probability,
+        },
+    ))
 }
 
 fn parse_modification_location(value: &str) -> Option<(u8, Option<Probability>)> {
@@ -1024,6 +1078,25 @@ mod tests {
         assert_eq!(residue.anomeric_position, 1);
         assert_eq!(residue.modifications.len(), 1);
         assert_eq!(residue.modifications[0].position.0, 6);
+    }
+
+    #[test]
+    fn test_parse_legacy_misplaced_reducing_end_anomer() {
+        let source = "WURCS=2.0/1,1,0/[a2122h_2-1a_1-5*NCC/3=O]/1/";
+        let graph = parse_wurcs(source).unwrap();
+        let residue = graph.residue(graph.root().unwrap()).unwrap();
+
+        assert_eq!(residue.anomeric_position, 1);
+        assert_eq!(residue.anomeric_symbol, AnomericSymbol::Alpha);
+        assert_eq!(residue.ring_start, Some(1));
+        assert_eq!(residue.ring_end, Some(5));
+        assert_eq!(residue.modifications.len(), 1);
+        assert_eq!(residue.modifications[0].position, CarbonPosition(2));
+        assert_eq!(residue.modifications[0].descriptor, "NCC/3=O");
+        assert_eq!(
+            standardize_wurcs(source).unwrap(),
+            "WURCS=2.0/1,1,0/[a2122h-1a_1-5_2*NCC/3=O]/1/"
+        );
     }
 
     #[test]

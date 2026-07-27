@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod glycoshape_tests {
-    use crabwurcs_core::{parse_wurcs, write_wurcs};
+    use crabwurcs_core::{parse_wurcs, write_wurcs, write_wurcs_canonical};
     use serde::Deserialize;
     use std::collections::HashMap;
 
@@ -311,6 +311,157 @@ mod glycoshape_tests {
             "Only found {}/{} known glycans",
             found,
             known_ids.len()
+        );
+    }
+
+    /// WURCS for the alpha/beta anomers must differ from the archetype at the
+    /// reducing end and survive a parse→write round-trip. A reducing-end
+    /// monosaccharide with a modification (e.g. `u2122h_2*NCC/3=O`) was being
+    /// emitted with the anomeric+ring info spliced into the modification
+    /// segment (`a2122h_2-1a_1-5*NCC/3=O`) instead of the header
+    /// (`a2122h-1a_1-5_2*NCC/3=O`).
+    #[derive(Debug, Deserialize)]
+    struct Variant {
+        #[allow(dead_code)]
+        #[serde(rename = "ID")]
+        id: Option<String>,
+        wurcs: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct TriEntry {
+        archetype: Variant,
+        alpha: Variant,
+        beta: Variant,
+    }
+
+    #[test]
+    fn test_glycoshape_alpha_beta_roundtrip() {
+        use crabwurcs_core::model::AnomericSymbol;
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../GLYCOSHAPE.json");
+        let data = std::fs::read_to_string(path).expect("Cannot read GLYCOSHAPE.json");
+        let raw: std::collections::HashMap<String, TriEntry> =
+            serde_json::from_str(&data).expect("Cannot parse GLYCOSHAPE.json");
+
+        // Read the parsed reducing-end anomer (root residue) of a WURCS string.
+        fn root_anomer(wurcs: &str) -> Option<AnomericSymbol> {
+            let g = parse_wurcs(wurcs).ok()?;
+            let root = g.root()?;
+            Some(g.residue(root)?.anomeric_symbol)
+        }
+
+        fn roundtrip_root_anomer(wurcs: &str) -> Option<AnomericSymbol> {
+            let graph = parse_wurcs(wurcs).ok()?;
+            let canonical = write_wurcs_canonical(&graph).ok()?;
+            root_anomer(&canonical)
+        }
+
+        let mut missing = Vec::new();
+        // Cases where alpha/beta fail to encode the anomer at the reducing end:
+        // crabWURCS parses them back as Unknown — so alpha, beta and the
+        // archetype all collapse to the same (undefined-anomer) structure.
+        let mut alpha_not_alpha = Vec::new();
+        let mut beta_not_beta = Vec::new();
+        let mut archetype_not_unknown = Vec::new();
+        let mut alpha_eq_arch = Vec::new();
+        let mut beta_eq_arch = Vec::new();
+        let mut alpha_eq_beta = Vec::new();
+
+        for (gid, e) in &raw {
+            let aw = e.archetype.wurcs.as_deref();
+            let al = e.alpha.wurcs.as_deref();
+            let be = e.beta.wurcs.as_deref();
+            if aw.is_none() || al.is_none() || be.is_none() {
+                missing.push(gid.clone());
+                continue;
+            }
+            let (aw, al, be) = (aw.unwrap(), al.unwrap(), be.unwrap());
+            if al == aw {
+                alpha_eq_arch.push(gid.clone());
+            }
+            if be == aw {
+                beta_eq_arch.push(gid.clone());
+            }
+            if al == be {
+                alpha_eq_beta.push(gid.clone());
+            }
+            if root_anomer(aw) != Some(AnomericSymbol::Unknown)
+                || roundtrip_root_anomer(aw) != Some(AnomericSymbol::Unknown)
+            {
+                archetype_not_unknown.push(gid.clone());
+            }
+            if root_anomer(al) != Some(AnomericSymbol::Alpha)
+                || roundtrip_root_anomer(al) != Some(AnomericSymbol::Alpha)
+            {
+                alpha_not_alpha.push(gid.clone());
+            }
+            if root_anomer(be) != Some(AnomericSymbol::Beta)
+                || roundtrip_root_anomer(be) != Some(AnomericSymbol::Beta)
+            {
+                beta_not_beta.push(gid.clone());
+            }
+        }
+        missing.sort();
+
+        let mut report = String::new();
+        report.push_str("\n======= alpha/beta reducing-end anomer audit =======\n");
+        report.push_str(&format!(
+            "entries: {}, missing-variant: {}\n",
+            raw.len(),
+            missing.len()
+        ));
+        report.push_str(&format!(
+            "string equality -> alpha==archetype: {}, beta==archetype: {}, alpha==beta: {}\n",
+            alpha_eq_arch.len(),
+            beta_eq_arch.len(),
+            alpha_eq_beta.len()
+        ));
+        report.push_str(&format!(
+            "parsed reducing-end anomer wrong -> archetype not Unknown: {}, alpha not Alpha: {}, beta not Beta: {}\n",
+            archetype_not_unknown.len(),
+            alpha_not_alpha.len(),
+            beta_not_beta.len()
+        ));
+        report.push_str(&format!(
+            "ALPHA reducing-end anomer != Alpha ({}): {:?}\n",
+            alpha_not_alpha.len(),
+            alpha_not_alpha
+        ));
+        report.push_str(&format!(
+            "BETA  reducing-end anomer != Beta ({}): {:?}\n",
+            beta_not_beta.len(),
+            beta_not_beta
+        ));
+        println!("{}", report);
+
+        assert!(
+            archetype_not_unknown.is_empty(),
+            "archetype not Unknown: {:?}",
+            archetype_not_unknown
+        );
+        assert_eq!(
+            missing,
+            ["GS00898"],
+            "unexpected entries without alpha/beta WURCS"
+        );
+        assert!(alpha_eq_beta.is_empty(), "alpha==beta: {:?}", alpha_eq_beta);
+        assert!(
+            alpha_eq_arch.is_empty() && beta_eq_arch.is_empty(),
+            "alpha==archetype: {:?}, beta==archetype: {:?}",
+            alpha_eq_arch,
+            beta_eq_arch
+        );
+        assert!(
+            alpha_not_alpha.is_empty(),
+            "{} alpha entries parse as non-Alpha reducing end: {:?}",
+            alpha_not_alpha.len(),
+            alpha_not_alpha
+        );
+        assert!(
+            beta_not_beta.is_empty(),
+            "{} beta entries parse as non-Beta reducing end: {:?}",
+            beta_not_beta.len(),
+            beta_not_beta
         );
     }
 }
