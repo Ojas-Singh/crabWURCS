@@ -12,7 +12,7 @@ members = [
 
 # Shared metadata inherited by member crates via `<field>.workspace = true`.
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 rust-version = "1.97"
 authors = ["crabWURCS contributors"]
@@ -25,12 +25,12 @@ categories = ["science"]
 # Pin shared third-party dependency versions here so every crate in the workspace uses the same version. Member crates should depend on these
 # via `dep-name = { workspace = true }` rather than restating a version.
 [workspace.dependencies]
-crabwurcs-core = { path = "crabwurcs-core", version = "0.2.1" }
-crabwurcs-iupac = { path = "crabwurcs-iupac", version = "0.2.1" }
-crabwurcs-mol = { path = "crabwurcs-mol", version = "0.2.1" }
-crabwurcs-pdb = { path = "crabwurcs-pdb", version = "0.2.1" }
-crabwurcs-snfg = { path = "crabwurcs-snfg", version = "0.2.1" }
-crabwurcs = { path = "crabwurcs", version = "0.2.1" }
+crabwurcs-core = { path = "crabwurcs-core", version = "0.2.2" }
+crabwurcs-iupac = { path = "crabwurcs-iupac", version = "0.2.2" }
+crabwurcs-mol = { path = "crabwurcs-mol", version = "0.2.2" }
+crabwurcs-pdb = { path = "crabwurcs-pdb", version = "0.2.2" }
+crabwurcs-snfg = { path = "crabwurcs-snfg", version = "0.2.2" }
+crabwurcs = { path = "crabwurcs", version = "0.2.2" }
 
 thiserror = "2.0"
 petgraph = "0.7"

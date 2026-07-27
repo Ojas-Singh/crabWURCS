@@ -1,4 +1,12 @@
-# crabWURCS
+![crabWURCS Banner](docs/crabWURCS_banner.png)
+
+[![Crates.io](https://img.shields.io/crates/v/crabwurcs)](https://crates.io/crates/crabwurcs)
+[![Documentation](https://docs.rs/crabwurcs/badge.svg)](https://docs.rs/crabwurcs)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/rust-1.97%2B-orange.svg)](https://www.rust-lang.org)
+
+
+
 
 A pure-Rust toolkit for glycan notation conversion, chemical-structure interop, and SNFG rendering.
 
@@ -18,7 +26,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-crabwurcs = "0.1.0"
+crabwurcs = "0.2.2"
 ```
 
 For CLI installation:
