@@ -1,0 +1,28 @@
+site_name: crabWURCS
+site_description: Glycan conversion, molecular interop, PDB extraction, and SNFG rendering
+site_url: https://ojas-singh.github.io/crabWURCS/
+repo_url: https://github.com/Ojas-Singh/crabWURCS
+repo_name: Ojas-Singh/crabWURCS
+docs_dir: site-docs
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - content.code.copy
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Formats and coverage: formats.md
+  - Python API: python-api.md
+  - PDB and mmCIF: pdb.md
+  - SNFG rendering: rendering.md
+  - CLI: cli.md
+  - Errors and limitations: errors.md
+  - Reproducibility: reproducibility.md
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - pymdownx.highlight
+  - pymdownx.superfences
+strict: true

@@ -29,13 +29,13 @@ This crate provides molecular structure handling capabilities with both pure-Rus
 ### Pure-Rust (Default)
 ```toml
 [dependencies]
-crabwurcs-mol = "0.2.1"
+crabwurcs-mol = "0.3.0"
 ```
 
 ### RDKit Backend
 ```toml
 [dependencies]
-crabwurcs-mol = { version = "0.2.1", features = ["rdkit-backend"] }
+crabwurcs-mol = { version = "0.3.0", features = ["rdkit-backend"] }
 ```
 
 See [README-BACKEND.md](README-BACKEND.md) for RDKit build requirements.
@@ -43,19 +43,17 @@ See [README-BACKEND.md](README-BACKEND.md) for RDKit build requirements.
 ## Usage
 
 ```rust
-use crabwurcs_mol::{MolParser, MolWurcsExtractor};
+use crabwurcs_core::{parse_wurcs, write_wurcs};
+use crabwurcs_mol::{ChemFormat, molecule_from_wurcs, wurcs_from_molecule};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Parse SMILES
     let smiles = "OC[C@H]1O[C@H](O)[C@H](O)[C@@H]1O";
-    let mol = MolParser::parse_smiles(smiles)?;
-    
-    // Extract WURCS from molecular graph
-    let wurcs = MolWurcsExtractor::extract(&mol)?;
-    
-    // Read MOL file
-    let mol = MolParser::parse_mol_file("structure.mol")?;
-    
+    let graph = wurcs_from_molecule(smiles, ChemFormat::Smiles)?;
+    println!("{}", write_wurcs(&graph)?);
+
+    let graph = parse_wurcs("WURCS=2.0/1,1,0/[a2122h-1a_1-5]/1/")?;
+    let mol = molecule_from_wurcs(&graph, ChemFormat::Mol)?;
+    println!("{mol}");
     Ok(())
 }
 ```

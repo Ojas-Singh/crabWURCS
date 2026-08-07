@@ -25,16 +25,17 @@ This crate provides conversion between IUPAC, GLYCAM formats and the shared Resi
 ## Usage
 
 ```rust
-use crabwurcs_iupac::{IupacParser, GlycamParser};
+use crabwurcs_iupac::{parse_glycam, parse_iupac_condensed, write_iupac_condensed};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse IUPAC condensed
     let iupac = "Gal(b1-4)GlcNAc";
-    let graph = IupacParser::parse_condensed(iupac)?;
+    let graph = parse_iupac_condensed(iupac)?;
     
     // Parse GLYCAM
     let glycam = "β-D-Galp-(1→4)-D-GlcNAc";
-    let graph = GlycamParser::parse(glycam)?;
+    let graph = parse_glycam(glycam)?;
+    println!("{}", write_iupac_condensed(&graph)?);
     
     // Generate back to IUPAC
     let output = graph.to_iupac_condensed()?;

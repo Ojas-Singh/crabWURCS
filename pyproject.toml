@@ -1,0 +1,43 @@
+[build-system]
+requires = ["maturin>=1.14,<2"]
+build-backend = "maturin"
+
+[project]
+name = "crabwurcs"
+version = "0.3.0"
+description = "Fast glycan notation conversion, molecular interop, PDB extraction, and SNFG rendering"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [{ name = "crabWURCS contributors" }]
+keywords = ["glycan", "WURCS", "IUPAC", "SMILES", "PDB", "SNFG"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Rust",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Documentation = "https://ojas-singh.github.io/crabWURCS/"
+Repository = "https://github.com/Ojas-Singh/crabWURCS"
+Issues = "https://github.com/Ojas-Singh/crabWURCS/issues"
+Changelog = "https://github.com/Ojas-Singh/crabWURCS/blob/main/CHANGELOG.md"
+
+[project.scripts]
+crabwurcs = "crabwurcs.cli:main"
+
+[tool.maturin]
+manifest-path = "crabwurcs-python/Cargo.toml"
+python-source = "python"
+module-name = "crabwurcs._native"
+bindings = "pyo3"
+features = ["pyo3/abi3-py39"]
+strip = true
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]

@@ -1,141 +1,130 @@
 ![crabWURCS Banner](docs/crabWURCS_banner.png)
 
+# crabWURCS
+
+[![CI](https://github.com/Ojas-Singh/crabWURCS/actions/workflows/ci.yml/badge.svg)](https://github.com/Ojas-Singh/crabWURCS/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/crabwurcs)](https://pypi.org/project/crabwurcs/)
 [![Crates.io](https://img.shields.io/crates/v/crabwurcs)](https://crates.io/crates/crabwurcs)
 [![Documentation](https://docs.rs/crabwurcs/badge.svg)](https://docs.rs/crabwurcs)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust](https://img.shields.io/badge/rust-1.97%2B-orange.svg)](https://www.rust-lang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE-MIT)
 
+crabWURCS is a pure-Rust glycoinformatics toolkit with first-class Python and
+command-line interfaces. It converts WURCS 2.0, IUPAC condensed/extended,
+GLYCAM, SMILES, MOL, and SDF; extracts glycans from PDB/mmCIF; and renders SNFG
+SVG or PNG images.
 
+## Install
 
-
-A pure-Rust toolkit for glycan notation conversion, chemical-structure interop, and SNFG rendering.
-
-## Features
-
-- **Multi-format conversion**: Convert between WURCS, IUPAC (condensed/extended), GLYCAM, SMILES, MOL, and SDF formats
-- **Structure extraction**: Extract glycan structures from PDB and GLYCAM coordinate files
-- **Molecular chemistry**: Construct concrete WURCS backbones/MAP graphs and round-trip stereochemical SMILES or V3000 MOL/SDF without private metadata
-- **PDB component recognition**: Resolve bundled wwPDB CCD and GLYCAM residue IDs, with atom/coordinate-graph fallback for renamed components
-- **SNFG rendering**: Generate publication-quality SNFG (Symbol Nomenclature for Glycans) SVG or transparent 2× PNG graphics
-- **Lossless parsing**: Lossless WURCS 2.0 parsing with full support for ambiguous linkage positions
-- **Pure Rust**: No external C/C++ dependencies by default, with optional RDKit backend
-
-## Installation
-
-Add this to your `Cargo.toml`:
-
-```toml
-[dependencies]
-crabwurcs = "0.2.2"
-```
-
-For CLI installation:
+Python 3.9 or newer:
 
 ```bash
-cargo install crabwurcs-cli
+pip install crabwurcs
 ```
 
-## Quick Start
+Rust library or CLI:
 
-### Library Usage
+```bash
+cargo add crabwurcs@0.3.0
+cargo install crabwurcs-cli@0.3.0
+```
+
+Prebuilt Python wheels use the stable CPython ABI and do not require RDKit or
+a local Rust compiler on supported Linux, macOS, and Windows systems.
+
+## Python quick start
+
+```python
+import crabwurcs
+
+glycan = crabwurcs.Glycan.parse("Gal(b1-4)GlcNAc")
+print(glycan.to(crabwurcs.Format.WURCS))
+print(glycan.to(crabwurcs.Format.SMILES))
+
+svg = glycan.render(
+    "svg",
+    highlight_motifs=["Gal(b1-?)GlcNAc"],
+)
+open("glycan.svg", "w").write(svg)
+
+for result in crabwurcs.extract_pdb_file("structure.cif"):
+    print(result.attachment_site, result.glycan.to("iupac-condensed"))
+    print(result.residues)
+```
+
+Convenience functions are available for one-step use:
+
+```python
+wurcs = crabwurcs.convert(
+    "Gal(b1-4)GlcNAc",
+    to_format="wurcs",
+    from_format="iupac-condensed",
+)
+png = crabwurcs.render_snfg(wurcs, from_format="wurcs", image_format="png")
+```
+
+## Rust quick start
 
 ```rust
-use crabwurcs::prelude::*;
+use crabwurcs::{Format, convert, parse_notation, render_svg};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Convert between glycan formats
     let iupac = "Gal(b1-4)GlcNAc";
-    let wurcs = crabwurcs::convert(iupac, Format::Wurcs)?;
-    
-    // Render to SNFG SVG
-    let svg = crabwurcs::render_snfg(iupac)?;
-    
+    let wurcs = convert(iupac, Format::IupacCondensed, Format::Wurcs)?;
+    let graph = parse_notation(&wurcs, Format::Wurcs)?;
+    let svg = render_svg(&graph)?;
+    println!("{svg}");
     Ok(())
 }
 ```
 
-### CLI Usage
+## Command line
+
+Both `pip install crabwurcs` and `cargo install crabwurcs-cli` install the
+`crabwurcs` command:
 
 ```bash
-# Convert formats (auto-detects input)
 crabwurcs convert --to wurcs 'Gal(b1-4)GlcNAc'
-crabwurcs convert --to glycam 'β-D-Galp-(1→4)-D-GlcNAc'
-
-# Render SNFG graphics; the output extension selects SVG or PNG
-crabwurcs render --output glycan.svg 'Gal(b1-4)GlcNAc'
+crabwurcs wurcs-to-mol --format smiles glycan.wurcs
+crabwurcs pdb-to-wurcs --to iupac-condensed structure.cif
 crabwurcs render --output glycan.png 'Gal(b1-4)GlcNAc'
-
-# Extract from PDB files
-crabwurcs pdb-to-wurcs --to iupac-condensed glycan.pdb
-
-# Handle compositions and complex structures
-crabwurcs convert --to wurcs '{GlcNAc}2,{Man}3,{Fuc}1'
-
-# Generic SNFG classes work in linked structures and compositions
-crabwurcs render 'HexNAc(?1-?)Hex'
-crabwurcs render '{Hex}3,{HexNAc}2,{dHex}1'
-crabwurcs render \
-  --highlight-motif 'Fuc(a1-?)[Gal(b1-?)]GlcNAc' \
-  --motif-from iupac-condensed \
-  'Neu5Ac(a2-3)Gal(b1-4)[Fuc(a1-3)]GlcNAc(b1-2)Man(a1-3)[Gal(b1-3)[Fuc(a1-4)]GlcNAc(b1-2)Man(a1-6)]Man(b1-4)GlcNAc(b1-4)[Fuc(a1-6)]GlcNAc'
 ```
 
-The renderer implements the complete SNFG 2.0.4 symbol table and official
-RGB palette. Generic classes preserve their unspecified chemistry in IUPAC
-and WURCS. Exporting a generic class to GLYCAM returns an error because GLYCAM
-would require assigning stereochemistry that is not present in the input.
+## Coverage and chemical guarantees
 
-`render --highlight-motif` performs structural, wildcard-aware motif
-matching. The option may be repeated, accepts WURCS, condensed or extended
-IUPAC, and GLYCAM through `--motif-from`, and de-emphasizes everything outside
-the union of all matches using GlycoDraw-compatible muted colors.
+- All 87 SNFG 2.0.4 registry entries parse and render.
+- All 74 chemically concrete entries are tested through WURCS, IUPAC,
+  SMILES, MOL/SDF, and PDB/mmCIF component recognition.
+- The 13 generic/display-only classes preserve uncertainty and return typed
+  errors when a concrete molecule would require invented stereochemistry.
+- Compositions, uncertain linkage ensembles, probabilities, and variable
+  repeats do not silently collapse to one molecule.
+- PDB/mmCIF extraction retains chain, sequence number, insertion code, and
+  graph-node provenance. Coordinate generation and PDB writing are out of
+  scope for 0.3.0.
 
-Every SVG includes accessible title/description elements and invisible
-structured metadata containing canonical IUPAC condensed and WURCS notation.
-When the input notation is available, its trimmed value and detected format
-are recorded as well. Assigned names that cannot be represented in WURCS are
-marked unavailable without preventing SVG or PNG rendering.
+See the [complete residue table](https://github.com/Ojas-Singh/crabWURCS/blob/main/crabwurcs/docs/supported-monosaccharides.md)
+and [format limitations](https://ojas-singh.github.io/crabWURCS/formats/) for details.
 
-## Architecture
+## Workspace
 
-The project is organized as a workspace of specialized crates:
-
-```
-crabwurcs-core    — Core WURCS parser/writer + shared ResidueGraph model
-crabwurcs-iupac   — IUPAC condensed/extended and GLYCAM converters
-crabwurcs-mol     — MOL/SDF/SMILES molecular structure handling
-crabwurcs-pdb     — PDB/mmCIF glycan extraction
-crabwurcs-snfg    — SNFG SVG rendering
-crabwurcs         — Unified facade crate
-craburcs-cli      — Command-line interface
-```
-
-All formats convert through a shared `ResidueGraph` model, ensuring consistent representation across different notations.
-
-## Documentation
-
-- **[Supported monosaccharides](crabwurcs/docs/supported-monosaccharides.md)** — every SNFG 2.0.4 symbol, colour, WURCS code, and alias, with a rendered thumbnail for each
-- **[SNFG rendering](crabwurcs/docs/rendering.md)** — shapes, the RGB palette, layout rules, render options, and SVG/PNG output
-- **[Motif highlighting](crabwurcs/docs/motif-highlighting.md)** — wildcard-aware motif matching and the muted palette, with before/after figures
-- **[Status & Progress](docs/status.md)**: Detailed development status and testing coverage
-- **[API Documentation](https://docs.rs/crabwurcs)**: Full API reference
-- Repository: [https://github.com/Ojas-Singh/crabWURCS](https://github.com/Ojas-Singh/crabWURCS)
-
-The symbol thumbnails in these guides are generated from the renderer itself:
-
-```bash
-cargo run -p crabwurcs --example generate_docs_assets
+```text
+crabwurcs-core    WURCS grammar and shared ResidueGraph
+crabwurcs-iupac   IUPAC condensed/extended and GLYCAM
+crabwurcs-mol     SMILES, MOL, and SDF molecular interop
+crabwurcs-pdb     PDB/mmCIF glycan extraction
+crabwurcs-snfg    SNFG SVG/PNG rendering
+crabwurcs         unified Rust facade
+crabwurcs-cli     Rust command-line application
+crabwurcs-python  private PyO3 extension for the PyPI package
 ```
 
-Re-run it whenever the symbol table, palette, or layout in `crabwurcs-snfg`
-changes, then commit the regenerated files under `crabwurcs/docs/img/`.
+## Documentation and development
 
-## License
+- [User guide](https://ojas-singh.github.io/crabWURCS/)
+- [Rust API](https://docs.rs/crabwurcs)
+- [Python API](site-docs/python-api.md)
+- [Contributing](CONTRIBUTING.md)
+- [Release process](RELEASE.md)
+- [Changelog](CHANGELOG.md)
 
-This project is licensed under the [MIT License](LICENSE-MIT).
-
-## Contributing
-
-The workspace targets Rust 1.97 or newer, uses Rust edition 2024, and tracks
-the stable toolchain through `rust-toolchain.toml`. Contributions are welcome!
-Please feel free to submit a Pull Request.
+crabWURCS is available under the [MIT license](LICENSE-MIT).

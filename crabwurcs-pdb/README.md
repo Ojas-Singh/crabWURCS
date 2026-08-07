@@ -26,20 +26,16 @@ This crate provides glycan structure extraction from PDB and mmCIF coordinate fi
 ## Usage
 
 ```rust
-use crabwurcs_pdb::{PdbParser, GlycamParser};
+use crabwurcs_core::write_wurcs;
+use crabwurcs_pdb::extract_glycans_with_provenance_from_file;
+use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Extract from PDB file
-    let glycans = PdbParser::extract_glycans("glycan.pdb")?;
-    
-    // Extract from GLYCAM coordinate file
-    let glycans = GlycamParser::extract_glycans("glycam.pdb")?;
-    
-    // Process each glycan
+    let glycans = extract_glycans_with_provenance_from_file(Path::new("glycan.pdb"))?;
     for glycan in glycans {
-        println!("Extracted: {}", glycan.to_wurcs()?);
+        println!("Extracted: {}", write_wurcs(&glycan.graph)?);
+        println!("Source residues: {:?}", glycan.residues);
     }
-    
     Ok(())
 }
 ```

@@ -53,10 +53,8 @@ fn write_wurcs_impl(graph: &ResidueGraph, preserve_source: bool) -> CoreResult<S
             kind.canonical_name().to_string(),
         ));
     }
-    if preserve_source {
-        if let Some(source) = graph.source_wurcs() {
-            return Ok(source.to_string());
-        }
+    if preserve_source && let Some(source) = graph.source_wurcs() {
+        return Ok(source.to_string());
     }
     let inner = graph.inner();
     let node_count = inner.node_count();
@@ -116,57 +114,57 @@ fn write_wurcs_impl(graph: &ResidueGraph, preserve_source: bool) -> CoreResult<S
 
     let mut edge_parts = Vec::new();
     for edge_idx in inner.edge_indices() {
-        if let Some((parent, child)) = inner.edge_endpoints(edge_idx) {
-            if let Some(linkage) = inner.edge_weight(edge_idx) {
-                // Use sequence position (0-based) instead of node index
-                let parent_seq = *node_to_seq_pos.get(&parent.index()).unwrap_or(&0);
-                let child_seq = *node_to_seq_pos.get(&child.index()).unwrap_or(&0);
-                let parent_letter = (b'a' + parent_seq as u8) as char;
-                let child_letter = (b'a' + child_seq as u8) as char;
+        if let Some((parent, child)) = inner.edge_endpoints(edge_idx)
+            && let Some(linkage) = inner.edge_weight(edge_idx)
+        {
+            // Use sequence position (0-based) instead of node index
+            let parent_seq = *node_to_seq_pos.get(&parent.index()).unwrap_or(&0);
+            let child_seq = *node_to_seq_pos.get(&child.index()).unwrap_or(&0);
+            let parent_letter = (b'a' + parent_seq as u8) as char;
+            let child_letter = (b'a' + child_seq as u8) as char;
 
-                let mut parent_endpoint = linkage
-                    .parent_positions()
-                    .map(|position| {
-                        format_endpoint_with_map(
-                            parent_letter,
-                            position,
-                            linkage.parent_direction.as_deref(),
-                            linkage.parent_modification_position,
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("|");
-                if let Some(probability) = linkage.parent_probability {
-                    parent_endpoint.push_str(&format!("%{}%", probability.to_wurcs()));
-                }
-                let mut child_endpoint = linkage
-                    .child_positions()
-                    .map(|position| {
-                        format_endpoint_with_map(
-                            child_letter,
-                            position,
-                            linkage.child_direction.as_deref(),
-                            linkage.child_modification_position,
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("|");
-                if let Some(probability) = linkage.child_probability {
-                    child_endpoint.push_str(&format!("%{}%", probability.to_wurcs()));
-                }
-                let repeat_suffix = linkage
-                    .repeat
-                    .as_ref()
-                    .map(|repeat| format!("~{}", repeat.to_wurcs()))
-                    .unwrap_or_default();
-                edge_parts.push(format!(
-                    "{}-{}{}{}",
-                    parent_endpoint,
-                    child_endpoint,
-                    linkage.map_code.as_deref().unwrap_or_default(),
-                    repeat_suffix
-                ));
+            let mut parent_endpoint = linkage
+                .parent_positions()
+                .map(|position| {
+                    format_endpoint_with_map(
+                        parent_letter,
+                        position,
+                        linkage.parent_direction.as_deref(),
+                        linkage.parent_modification_position,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("|");
+            if let Some(probability) = linkage.parent_probability {
+                parent_endpoint.push_str(&format!("%{}%", probability.to_wurcs()));
             }
+            let mut child_endpoint = linkage
+                .child_positions()
+                .map(|position| {
+                    format_endpoint_with_map(
+                        child_letter,
+                        position,
+                        linkage.child_direction.as_deref(),
+                        linkage.child_modification_position,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("|");
+            if let Some(probability) = linkage.child_probability {
+                child_endpoint.push_str(&format!("%{}%", probability.to_wurcs()));
+            }
+            let repeat_suffix = linkage
+                .repeat
+                .as_ref()
+                .map(|repeat| format!("~{}", repeat.to_wurcs()))
+                .unwrap_or_default();
+            edge_parts.push(format!(
+                "{}-{}{}{}",
+                parent_endpoint,
+                child_endpoint,
+                linkage.map_code.as_deref().unwrap_or_default(),
+                repeat_suffix
+            ));
         }
     }
 
@@ -536,14 +534,14 @@ fn parse_single_residue(input: &str) -> Monosaccharide {
     };
 
     for part in parts.iter().skip(mod_start_idx) {
-        if let Some((location, desc)) = part.split_once('*') {
-            if let Some((pos, probability)) = parse_modification_location(location) {
-                modifications.push(Modification {
-                    position: CarbonPosition(pos),
-                    descriptor: desc.to_string(),
-                    probability,
-                });
-            }
+        if let Some((location, desc)) = part.split_once('*')
+            && let Some((pos, probability)) = parse_modification_location(location)
+        {
+            modifications.push(Modification {
+                position: CarbonPosition(pos),
+                descriptor: desc.to_string(),
+                probability,
+            });
         }
     }
 
@@ -719,10 +717,10 @@ fn assemble_graph(
             })
             .map(|candidate| candidate.ring)
             .collect::<Vec<_>>();
-        if let Some(first) = declared.first().copied() {
-            if declared.iter().all(|ring| *ring == first) {
-                parsed_residues[index].ring = first;
-            }
+        if let Some(first) = declared.first().copied()
+            && declared.iter().all(|ring| *ring == first)
+        {
+            parsed_residues[index].ring = first;
         }
     }
 
@@ -921,32 +919,32 @@ fn parse_linkages(linkage_str: &str) -> Vec<ParsedLinkage> {
             Some(index) => (&segment[..index], Some(segment[index..].to_string())),
             None => (segment, None),
         };
-        if segment.contains('-') {
-            if let Some((from_part, to_part)) = segment.split_once('-') {
-                let (from_part, from_probability) = strip_endpoint_probability(from_part);
-                let (to_part, to_probability) = strip_endpoint_probability(to_part);
-                let from = parse_endpoint(from_part);
-                let to = parse_endpoint(to_part);
-                if let (
-                    Some((fr, fp, from_direction, from_modification_position)),
-                    Some((tr, tp, to_direction, to_modification_position)),
-                ) = (from, to)
-                {
-                    result.push(ParsedLinkage::Defined {
-                        from_seq: fr,
-                        from_positions: fp,
-                        to_seq: tr,
-                        to_positions: tp,
-                        repeat,
-                        from_probability,
-                        to_probability,
-                        map_code,
-                        from_direction,
-                        from_modification_position,
-                        to_direction,
-                        to_modification_position,
-                    });
-                }
+        if segment.contains('-')
+            && let Some((from_part, to_part)) = segment.split_once('-')
+        {
+            let (from_part, from_probability) = strip_endpoint_probability(from_part);
+            let (to_part, to_probability) = strip_endpoint_probability(to_part);
+            let from = parse_endpoint(from_part);
+            let to = parse_endpoint(to_part);
+            if let (
+                Some((fr, fp, from_direction, from_modification_position)),
+                Some((tr, tp, to_direction, to_modification_position)),
+            ) = (from, to)
+            {
+                result.push(ParsedLinkage::Defined {
+                    from_seq: fr,
+                    from_positions: fp,
+                    to_seq: tr,
+                    to_positions: tp,
+                    repeat,
+                    from_probability,
+                    to_probability,
+                    map_code,
+                    from_direction,
+                    from_modification_position,
+                    to_direction,
+                    to_modification_position,
+                });
             }
         }
     }

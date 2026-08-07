@@ -15,8 +15,8 @@
 //! tables for all 943 GlycoShape records (938 molecularly specified structures
 //! plus four notation-only edge cases, with duplicate records sharing rows).
 //! Equivalent SMILES serializations are resolved by the pure-Rust molecular
-//! backend; previously unseen glycan extraction remains the unfinished
-//! MolWURCS-specific layer.
+//! backend, with de-novo molecular extraction and an authoritative
+//! registry-derived index for every concrete monosaccharide.
 //!
 //! The sections below — generated from the renderer's own output — document
 //! every supported monosaccharide symbol, the SNFG rendering rules, and motif
@@ -39,10 +39,15 @@ pub use crabwurcs_core::{
     find_motif_matches, residue_from_kind, write_wurcs_canonical,
 };
 pub use crabwurcs_iupac::write_iupac_condensed_canonical;
+pub use crabwurcs_pdb::{
+    ExtractedGlycan, ExtractedGlycanWithProvenance, PdbResidueReference, extract_glycans_from_file,
+    extract_glycans_from_str, extract_glycans_with_provenance_from_file,
+    extract_glycans_with_provenance_from_str,
+};
 pub use crabwurcs_snfg::{
-    RenderOptions, SnfgError, SnfgResult, SourceNotation, render_png, render_png_with_motifs,
-    render_png_with_options, render_svg, render_svg_with_motifs, render_svg_with_options,
-    render_symbol_svg,
+    HighlightSelection, RenderOptions, SnfgError, SnfgResult, SourceNotation, render_png,
+    render_png_with_motifs, render_png_with_options, render_png_with_selection, render_svg,
+    render_svg_with_motifs, render_svg_with_options, render_svg_with_selection, render_symbol_svg,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,20 +134,20 @@ fn corpus_record_for_input(input: &str, format: Format) -> Option<CorpusRecord<'
 }
 
 fn corpus_smiles_for_graph(graph: &ResidueGraph) -> Option<&'static str> {
-    if let Some(source) = graph.source_iupac() {
-        if let Some(record) = corpus_record_for_input(source, Format::IupacCondensed) {
-            return record.notation(Format::Smiles);
-        }
+    if let Some(source) = graph.source_iupac()
+        && let Some(record) = corpus_record_for_input(source, Format::IupacCondensed)
+    {
+        return record.notation(Format::Smiles);
     }
-    if let Some(source) = graph.source_iupac_extended() {
-        if let Some(record) = corpus_record_for_input(source, Format::IupacExtended) {
-            return record.notation(Format::Smiles);
-        }
+    if let Some(source) = graph.source_iupac_extended()
+        && let Some(record) = corpus_record_for_input(source, Format::IupacExtended)
+    {
+        return record.notation(Format::Smiles);
     }
-    if let Some(source) = graph.source_glycam() {
-        if let Some(record) = corpus_record_for_input(source, Format::Glycam) {
-            return record.notation(Format::Smiles);
-        }
+    if let Some(source) = graph.source_glycam()
+        && let Some(record) = corpus_record_for_input(source, Format::Glycam)
+    {
+        return record.notation(Format::Smiles);
     }
 
     core::write_wurcs(graph)

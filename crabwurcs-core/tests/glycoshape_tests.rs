@@ -26,7 +26,13 @@ mod glycoshape_tests {
     }
 
     fn load_entries() -> Vec<(String, Archetype)> {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../GLYCOSHAPE.json");
+        let path = std::env::var("CRABWURCS_GLYCOSHAPE_JSON").unwrap_or_else(|_| {
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/glycoshape.sample.json"
+            )
+            .to_owned()
+        });
         let data = std::fs::read_to_string(path).expect("Cannot read GLYCOSHAPE.json");
         let raw: HashMap<String, Entry> =
             serde_json::from_str(&data).expect("Cannot parse GLYCOSHAPE.json");
@@ -284,20 +290,19 @@ mod glycoshape_tests {
 
         let mut found = 0;
         for (_, archetype) in &entries {
-            if let Some(ref gt) = archetype.glytoucan {
-                if known_ids.contains(&gt.as_str()) {
-                    let wurcs = match &archetype.wurcs {
-                        Some(w) => w,
-                        None => continue,
-                    };
-                    let graph = parse_wurcs(wurcs).unwrap_or_else(|_| {
-                        panic!("Failed to parse known glycan {}: {}", gt, wurcs)
-                    });
-                    let output = write_wurcs(&graph)
-                        .unwrap_or_else(|_| panic!("Failed to write known glycan {}", gt));
-                    assert!(!output.is_empty(), "Empty output for known glycan {}", gt);
-                    found += 1;
-                }
+            if let Some(ref gt) = archetype.glytoucan
+                && known_ids.contains(&gt.as_str())
+            {
+                let wurcs = match &archetype.wurcs {
+                    Some(w) => w,
+                    None => continue,
+                };
+                let graph = parse_wurcs(wurcs)
+                    .unwrap_or_else(|_| panic!("Failed to parse known glycan {}: {}", gt, wurcs));
+                let output = write_wurcs(&graph)
+                    .unwrap_or_else(|_| panic!("Failed to write known glycan {}", gt));
+                assert!(!output.is_empty(), "Empty output for known glycan {}", gt);
+                found += 1;
             }
         }
 
@@ -336,9 +341,11 @@ mod glycoshape_tests {
     }
 
     #[test]
+    #[ignore = "maintenance audit: set CRABWURCS_GLYCOSHAPE_JSON to the full corpus"]
     fn test_glycoshape_alpha_beta_roundtrip() {
         use crabwurcs_core::model::AnomericSymbol;
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../GLYCOSHAPE.json");
+        let path = std::env::var("CRABWURCS_GLYCOSHAPE_JSON")
+            .expect("set CRABWURCS_GLYCOSHAPE_JSON to run the full corpus audit");
         let data = std::fs::read_to_string(path).expect("Cannot read GLYCOSHAPE.json");
         let raw: std::collections::HashMap<String, TriEntry> =
             serde_json::from_str(&data).expect("Cannot parse GLYCOSHAPE.json");

@@ -5,10 +5,8 @@
 //! conversion, PDB glycan extraction, and SNFG rendering — one binary
 //! instead of four separate tools.
 //!
-//! Parsing, notation conversion, corpus-backed SMILES conversion, and SNFG
-//! rendering are implemented in the workspace crates. The bundled molecular
-//! corpus uses a pure-Rust backend; general glycan extraction from previously
-//! unseen molecules remains the MolWURCS-specific work in progress.
+//! Parsing, notation conversion, de-novo molecular interop, PDB/mmCIF
+//! extraction, and SNFG rendering are implemented in the workspace crates.
 
 use clap::{Parser, Subcommand, ValueEnum};
 use std::io::Read;

@@ -1,0 +1,32 @@
+{
+  "GS00001": {
+    "archetype": {
+      "ID": "GS00001",
+      "name": "glucose",
+      "wurcs": "WURCS=2.0/1,1,0/[a2122h-1x_1-5]/1/",
+      "iupac": "Glc",
+      "iupac_extended": "D-Glcp",
+      "glytoucan": "G00027JG"
+    }
+  },
+  "GS00002": {
+    "archetype": {
+      "ID": "GS00002",
+      "name": "lactosamine",
+      "wurcs": "WURCS=2.0/2,2,1/[a2112h-1b_1-5][a2122h-1x_1-5_2*NCC/3=O]/1-2/a4-b1",
+      "iupac": "Gal(b1-4)GlcNAc",
+      "iupac_extended": "β-D-Galp-(1→4)-D-GlcpNAc",
+      "glytoucan": null
+    }
+  },
+  "GS00003": {
+    "archetype": {
+      "ID": "GS00003",
+      "name": "branched test glycan",
+      "wurcs": "WURCS=2.0/3,3,2/[a1122h-1x_1-5][a2112h-1b_1-5][a1221m-1a_1-5]/1-2-3/a3-b1_a6-c1",
+      "iupac": "Gal(b1-3)[Fuc(a1-6)]Man",
+      "iupac_extended": null,
+      "glytoucan": null
+    }
+  }
+}

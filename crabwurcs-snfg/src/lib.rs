@@ -16,7 +16,7 @@ pub enum SnfgError {
         .0.backbone_length,
         .0.skeleton_code
     )]
-    UnknownSymbol(Monosaccharide),
+    UnknownSymbol(Box<Monosaccharide>),
 
     #[error(transparent)]
     Core(#[from] crabwurcs_core::CoreError),
@@ -879,10 +879,10 @@ fn resolve_triangle_collisions(graph: &ResidueGraph, info: &mut HashMap<usize, L
             .map(|edge| edge.weight().parent_position.0)
             .collect();
 
-        let has_both_alpha3_and_alpha6 = parent_fucose_children.iter().any(|&pos| pos == 3)
-            && parent_fucose_children.iter().any(|&pos| pos == 6);
-        let has_both_alpha2_and_alpha4 = parent_fucose_children.iter().any(|&pos| pos == 2)
-            && parent_fucose_children.iter().any(|&pos| pos == 4);
+        let has_both_alpha3_and_alpha6 =
+            parent_fucose_children.contains(&3) && parent_fucose_children.contains(&6);
+        let has_both_alpha2_and_alpha4 =
+            parent_fucose_children.contains(&2) && parent_fucose_children.contains(&4);
 
         // Check if this is core fucose - attached to the root GlcNAc (reducing end)
         let is_core_fucose = linkage_pos == 6
@@ -903,19 +903,15 @@ fn resolve_triangle_collisions(graph: &ResidueGraph, info: &mut HashMap<usize, L
             parent_layout.y
                 + if linkage_pos == 6 {
                     -V_SPACING // α6 fucose goes UP when paired with α3
-                } else if linkage_pos == 3 {
-                    V_SPACING // α3 fucose goes DOWN when paired with α6
                 } else {
-                    V_SPACING // other positions default to DOWN
+                    V_SPACING // α3 and other positions go DOWN
                 }
         } else if has_both_alpha2_and_alpha4 {
             parent_layout.y
                 + if linkage_pos == 4 {
                     -V_SPACING // α4 rhamnose goes UP when paired with α2
-                } else if linkage_pos == 2 {
-                    V_SPACING // α2 rhamnose goes DOWN when paired with α4
                 } else {
-                    V_SPACING // other positions default to DOWN
+                    V_SPACING // α2 and other positions go DOWN
                 }
         } else if is_core_fucose {
             parent_layout.y + -V_SPACING // Core α6 fucose defaults to UP
@@ -1017,18 +1013,14 @@ fn layout_subtree(
             let vertical_offset = if has_both_alpha3_and_alpha6 {
                 if linkage_pos == 6 {
                     -V_SPACING // α6 fucose goes UP when paired with α3
-                } else if linkage_pos == 3 {
-                    V_SPACING // α3 fucose goes DOWN when paired with α6
                 } else {
-                    V_SPACING // other positions default to DOWN
+                    V_SPACING // α3 and other positions go DOWN
                 }
             } else if has_both_alpha2_and_alpha4 {
                 if linkage_pos == 4 {
                     -V_SPACING // α4 rhamnose goes UP when paired with α2
-                } else if linkage_pos == 2 {
-                    V_SPACING // α2 rhamnose goes DOWN when paired with α4
                 } else {
-                    V_SPACING // other positions default to DOWN
+                    V_SPACING // α2 and other positions go DOWN
                 }
             } else if is_core_fucose {
                 -V_SPACING // Core α6 fucose defaults to UP
@@ -1151,6 +1143,27 @@ pub fn render_svg_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> Sn
     render_svg_internal(graph, opts, None)
 }
 
+/// Exact graph elements to keep vivid in a highlighted SNFG rendering.
+/// Indices are the stable `petgraph` node/edge indices exposed by the source
+/// `ResidueGraph`; elements not listed here are rendered with the muted SNFG
+/// palette.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HighlightSelection {
+    pub node_indices: BTreeSet<usize>,
+    pub edge_indices: BTreeSet<usize>,
+}
+
+/// Render an SNFG SVG with exactly the supplied graph nodes and edges
+/// highlighted. This is intended for callers that have already resolved a
+/// specific occurrence and must not highlight every matching motif.
+pub fn render_svg_with_selection(
+    graph: &ResidueGraph,
+    selection: &HighlightSelection,
+    opts: &RenderOptions,
+) -> SnfgResult<String> {
+    render_svg_internal(graph, opts, Some(selection))
+}
+
 /// Render an SNFG SVG while highlighting the union of every occurrence of
 /// every supplied motif.
 ///
@@ -1166,14 +1179,14 @@ pub fn render_svg_with_motifs(
     if motifs.is_empty() {
         return render_svg_with_options(graph, opts);
     }
-    let mut selection = MotifSelection::default();
+    let mut selection = HighlightSelection::default();
     for motif in motifs {
         for found in find_motif_matches(graph, motif)? {
-            selection.nodes.extend(found.node_indices);
-            selection.edges.extend(found.edge_indices);
+            selection.node_indices.extend(found.node_indices);
+            selection.edge_indices.extend(found.edge_indices);
         }
     }
-    render_svg_internal(graph, opts, Some(&selection))
+    render_svg_with_selection(graph, &selection, opts)
 }
 
 /// Render an SNFG diagram as a transparent PNG at twice the SVG dimensions.
@@ -1185,6 +1198,16 @@ pub fn render_png(graph: &ResidueGraph) -> SnfgResult<Vec<u8>> {
 /// rendering options.
 pub fn render_png_with_options(graph: &ResidueGraph, opts: &RenderOptions) -> SnfgResult<Vec<u8>> {
     svg_to_png(&render_svg_with_options(graph, opts)?)
+}
+
+/// Render an exact-selection SNFG diagram as a transparent PNG at twice the
+/// SVG dimensions.
+pub fn render_png_with_selection(
+    graph: &ResidueGraph,
+    selection: &HighlightSelection,
+    opts: &RenderOptions,
+) -> SnfgResult<Vec<u8>> {
+    svg_to_png(&render_svg_with_selection(graph, selection, opts)?)
 }
 
 /// Render a motif-highlighted SNFG diagram as a transparent PNG at twice the
@@ -1259,12 +1282,6 @@ fn svg_to_png(svg: &str) -> SnfgResult<Vec<u8>> {
         .map_err(|error| SnfgError::PngEncoding(error.to_string()))
 }
 
-#[derive(Debug, Default)]
-struct MotifSelection {
-    nodes: BTreeSet<usize>,
-    edges: BTreeSet<usize>,
-}
-
 fn highlight_class(selected: bool) -> &'static str {
     if selected {
         "motif-match"
@@ -1291,7 +1308,7 @@ const MOTIF_DEEMPHASIS_CSS: &str = r##"  .motif-match { opacity: 1; }
 fn render_svg_internal(
     graph: &ResidueGraph,
     opts: &RenderOptions,
-    highlights: Option<&MotifSelection>,
+    highlights: Option<&HighlightSelection>,
 ) -> SnfgResult<String> {
     let inner = graph.inner();
     if inner.node_count() == 0 {
@@ -1371,7 +1388,7 @@ fn render_svg_internal(
                 r#"<g data-edge-index="{}" class="{}">
 "#,
                 edge.id().index(),
-                highlight_class(selection.edges.contains(&edge.id().index()))
+                highlight_class(selection.edge_indices.contains(&edge.id().index()))
             ));
         }
         svg.push_str(&format!(
@@ -1471,7 +1488,7 @@ fn render_svg_internal(
                     r#"<g data-node-index="{}" class="{}">
 "#,
                     node_idx.index(),
-                    highlight_class(selection.nodes.contains(&node_idx.index()))
+                    highlight_class(selection.node_indices.contains(&node_idx.index()))
                 ));
             }
             draw_shape(&mut svg, &symbol, cx, cy, NODE_R * s, opts);
@@ -1521,12 +1538,17 @@ fn render_svg_internal(
 fn render_composition_svg(
     graph: &ResidueGraph,
     opts: &RenderOptions,
-    highlights: Option<&MotifSelection>,
+    highlights: Option<&HighlightSelection>,
 ) -> SnfgResult<String> {
     let mut groups: Vec<(String, Symbol, ModificationLabels, bool, Vec<usize>)> = Vec::new();
     for node in graph.inner().node_indices() {
         let residue = &graph.inner()[node];
-        let key = format!("{residue:?}");
+        // Composition diagrams normally coalesce identical residues.  Keep
+        // selected and unselected copies in separate groups so an explicit
+        // selection remains exact even when the composition contains repeats.
+        let selected =
+            highlights.is_some_and(|selection| selection.node_indices.contains(&node.index()));
+        let key = format!("{residue:?}|selected={selected}");
         if let Some((_, _, _, _, nodes)) =
             groups.iter_mut().find(|(value, _, _, _, _)| *value == key)
         {
@@ -1571,7 +1593,9 @@ fn render_composition_svg(
         let x = 75.0 * scale + index as f64 * spacing;
         let y = 62.0 * scale;
         if let Some(selection) = highlights {
-            let selected = nodes.iter().any(|node| selection.nodes.contains(node));
+            let selected = nodes
+                .iter()
+                .any(|node| selection.node_indices.contains(node));
             let indices = nodes
                 .iter()
                 .map(usize::to_string)
@@ -2539,6 +2563,28 @@ mod tests {
         let graph = crabwurcs_iupac::parse_iupac_condensed("Fuc(a1-3)GlcNAc(b1-4)GlcNAc").unwrap();
         let motif = crabwurcs_iupac::parse_iupac_condensed("Fuc(a1-?)GlcNAc").unwrap();
         let png = render_png_with_motifs(&graph, &[motif], &RenderOptions::default()).unwrap();
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    }
+
+    #[test]
+    fn explicit_selection_highlights_only_the_requested_graph_elements() {
+        let graph =
+            crabwurcs_iupac::parse_iupac_condensed("Fuc(a1-3)GlcNAc(b1-4)Fuc(a1-3)GlcNAc").unwrap();
+        let motif = crabwurcs_iupac::parse_iupac_condensed("Fuc(a1-?)GlcNAc").unwrap();
+        let all = render_svg_with_motifs(&graph, &[motif], &RenderOptions::default()).unwrap();
+        assert_eq!(all.matches("class=\"motif-match\"").count(), 6);
+
+        let mut selection = HighlightSelection::default();
+        selection.node_indices.extend([0, 1]);
+        selection.edge_indices.insert(0);
+        let exact =
+            render_svg_with_selection(&graph, &selection, &RenderOptions::default()).unwrap();
+        assert_eq!(exact.matches("class=\"motif-match\"").count(), 3);
+        assert_eq!(exact.matches("class=\"motif-dimmed\"").count(), 4);
+        assert!(exact.contains("data-node-index=\"0\" class=\"motif-match\""));
+        assert!(exact.contains("data-node-index=\"1\" class=\"motif-match\""));
+        assert!(exact.contains("data-edge-index=\"0\" class=\"motif-match\""));
+        let png = render_png_with_selection(&graph, &selection, &RenderOptions::default()).unwrap();
         assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
     }
 

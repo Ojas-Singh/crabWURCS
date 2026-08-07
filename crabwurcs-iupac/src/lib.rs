@@ -69,13 +69,13 @@ fn parse_iupac_condensed_legacy(input: &str) -> IupacResult<ResidueGraph> {
             let linkage_pos = parse_linkage_positions(token);
 
             // Apply anomer to the last residue
-            if let (Some(anom), Some(node)) = (anom, last_node) {
-                if let Some(res) = graph.inner_mut().node_weight_mut(node) {
-                    res.anomeric_symbol = anom;
-                    let is_sialic = res.skeleton_code.contains("21122");
-                    if !is_sialic {
-                        res.anomeric_prefix = anomeric_prefix(anom);
-                    }
+            if let (Some(anom), Some(node)) = (anom, last_node)
+                && let Some(res) = graph.inner_mut().node_weight_mut(node)
+            {
+                res.anomeric_symbol = anom;
+                let is_sialic = res.skeleton_code.contains("21122");
+                if !is_sialic {
+                    res.anomeric_prefix = anomeric_prefix(anom);
                 }
             }
             // Store linkage position for the last residue
@@ -147,14 +147,15 @@ fn parse_iupac_condensed_legacy(input: &str) -> IupacResult<ResidueGraph> {
             }
         } else if token == "[" {
             current_node = stack.pop();
-        } else if let Ok(idx) = token.parse::<usize>() {
-            if idx > 0 && idx <= n {
-                let z = idx - 1;
-                if let Some(p) = current_node {
-                    adj[p].push(z);
-                }
-                current_node = Some(z);
+        } else if let Ok(idx) = token.parse::<usize>()
+            && idx > 0
+            && idx <= n
+        {
+            let z = idx - 1;
+            if let Some(p) = current_node {
+                adj[p].push(z);
             }
+            current_node = Some(z);
         }
     }
 
@@ -1156,10 +1157,10 @@ fn extract_linkage_from_notation(notation: &str) -> LinkageInfo {
 fn extract_linkage_string_from_notation(notation: &str) -> String {
     // Pattern: Residue(anomeric-position-position)
     let re = regex::Regex::new(r"\(([abαβ?][\d?]-[\d?/]+)\)").unwrap();
-    if let Some(caps) = re.captures(notation) {
-        if let Some(linkage) = caps.get(1) {
-            return linkage.as_str().to_string();
-        }
+    if let Some(caps) = re.captures(notation)
+        && let Some(linkage) = caps.get(1)
+    {
+        return linkage.as_str().to_string();
     }
     String::new()
 }
@@ -1832,18 +1833,17 @@ fn extract_name_modifications(name: &str) -> Vec<Modification> {
                 }
                 if j < bytes.len() && bytes[j] == b'S' {
                     let pos_str = &name[i + 2..j];
-                    if let Ok(pos) = pos_str.parse::<u8>() {
-                        if pos > 0
-                            && !mods
-                                .iter()
-                                .any(|m| m.position.0 == pos && m.descriptor.contains("OSO"))
-                        {
-                            mods.push(Modification {
-                                position: CarbonPosition(pos),
-                                descriptor: "OSO/3=O/3=O".into(),
-                                probability: None,
-                            });
-                        }
+                    if let Ok(pos) = pos_str.parse::<u8>()
+                        && pos > 0
+                        && !mods
+                            .iter()
+                            .any(|m| m.position.0 == pos && m.descriptor.contains("OSO"))
+                    {
+                        mods.push(Modification {
+                            position: CarbonPosition(pos),
+                            descriptor: "OSO/3=O/3=O".into(),
+                            probability: None,
+                        });
                     }
                 }
                 i = j + 1;
@@ -1925,10 +1925,8 @@ pub fn write_iupac_condensed_canonical(graph: &ResidueGraph) -> IupacResult<Stri
 }
 
 fn write_iupac_condensed_impl(graph: &ResidueGraph, preserve_source: bool) -> IupacResult<String> {
-    if preserve_source {
-        if let Some(source) = graph.source_iupac() {
-            return Ok(source.to_string());
-        }
+    if preserve_source && let Some(source) = graph.source_iupac() {
+        return Ok(source.to_string());
     }
     let inner = graph.inner();
     if inner.node_count() == 0 {
@@ -2799,28 +2797,27 @@ pub fn parse_glycam(input: &str) -> IupacResult<ResidueGraph> {
         .to_string();
     let mut graph = parse_iupac_condensed(&condensed)?;
     if let (Some(root), Some((_, symbol, position, infer_position))) = (graph.root(), reducing_end)
+        && let Some(residue) = graph.residue_mut(root)
     {
-        if let Some(residue) = graph.residue_mut(root) {
-            let position = if infer_position
-                && (residue.anomeric_prefix.starts_with('A')
-                    || residue.anomeric_prefix.starts_with('h'))
-            {
-                2
-            } else if infer_position {
-                1
+        let position = if infer_position
+            && (residue.anomeric_prefix.starts_with('A')
+                || residue.anomeric_prefix.starts_with('h'))
+        {
+            2
+        } else if infer_position {
+            1
+        } else {
+            position
+        };
+        residue.anomeric_symbol = symbol;
+        residue.anomeric_position = position;
+        if symbol != AnomericSymbol::Unknown {
+            if residue.anomeric_prefix == "AUd" {
+                residue.anomeric_prefix = "Aad".into();
+            } else if residue.anomeric_prefix == "hU" {
+                residue.anomeric_prefix = "ha".into();
             } else {
-                position
-            };
-            residue.anomeric_symbol = symbol;
-            residue.anomeric_position = position;
-            if symbol != AnomericSymbol::Unknown {
-                if residue.anomeric_prefix == "AUd" {
-                    residue.anomeric_prefix = "Aad".into();
-                } else if residue.anomeric_prefix == "hU" {
-                    residue.anomeric_prefix = "ha".into();
-                } else {
-                    residue.anomeric_prefix = "a".into();
-                }
+                residue.anomeric_prefix = "a".into();
             }
         }
     }
@@ -2917,11 +2914,11 @@ fn normalize_glycam_residue(value: &str) -> String {
     };
     let mut name = raw.to_string();
     let mut suffix = String::new();
-    if let Some(start) = name.find('[') {
-        if let Some(end) = name.rfind(']') {
-            suffix = name[start + 1..end].replace(',', "");
-            name.truncate(start);
-        }
+    if let Some(start) = name.find('[')
+        && let Some(end) = name.rfind(']')
+    {
+        suffix = name[start + 1..end].replace(',', "");
+        name.truncate(start);
     }
     for (from, to) in [
         ("Neup5Ac", "Neu5Ac"),
@@ -3018,15 +3015,11 @@ fn translate_glycam_to_iupac_style(input: &str) -> String {
                 let linkage: String = chars[pos_start..i].iter().collect();
                 if linkage.contains('-') {
                     let parts: Vec<&str> = linkage.split('-').collect();
-                    if parts.len() == 2 {
-                        if let (Ok(child_pos), Ok(parent_position)) =
+                    if parts.len() == 2
+                        && let (Ok(child_pos), Ok(parent_position)) =
                             (parts[0].parse::<u8>(), parts[1].parse::<u8>())
-                        {
-                            result.push_str(&format!(
-                                "({}{}-{})",
-                                anomer, child_pos, parent_position
-                            ));
-                        }
+                    {
+                        result.push_str(&format!("({}{}-{})", anomer, child_pos, parent_position));
                     }
                 } else {
                     let child_pos = linkage.parse::<u8>().unwrap_or(1);
@@ -3345,16 +3338,16 @@ mod tests {
 
         println!("\n--- Edges ---");
         for edge in inner.edge_indices() {
-            if let Some((src, dst)) = inner.edge_endpoints(edge) {
-                if let Some(link) = inner.edge_weight(edge) {
-                    println!(
-                        "Edge: {} -> {} (parent_pos={}, child_pos={})",
-                        src.index(),
-                        dst.index(),
-                        link.parent_position.0,
-                        link.child_position.0
-                    );
-                }
+            if let Some((src, dst)) = inner.edge_endpoints(edge)
+                && let Some(link) = inner.edge_weight(edge)
+            {
+                println!(
+                    "Edge: {} -> {} (parent_pos={}, child_pos={})",
+                    src.index(),
+                    dst.index(),
+                    link.parent_position.0,
+                    link.child_position.0
+                );
             }
         }
 

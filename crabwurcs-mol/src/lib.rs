@@ -368,6 +368,47 @@ fn exact_wurcs_for_molecule(molecule: &Molecule) -> Option<&'static str> {
     canonical_corpus().get(&canonical_smiles(molecule)).copied()
 }
 
+/// Molecular index generated from the authoritative residue registry.  This
+/// complements the multi-residue GlycoShape corpus and ensures uncommon
+/// concrete monosaccharides round-trip by molecular identity as well as by
+/// the de-novo recognizer's family-level perception.
+fn registry_wurcs_for_molecule(molecule: &Molecule) -> Option<String> {
+    static INDEX: OnceLock<HashMap<String, String>> = OnceLock::new();
+    INDEX
+        .get_or_init(|| {
+            let mut index = HashMap::new();
+            for kind in crabwurcs_core::ResidueKind::ALL
+                .iter()
+                .copied()
+                .filter(|kind| !kind.is_generic() && kind.unique_residue().is_some())
+            {
+                let Ok(residue) = crabwurcs_core::residue_from_kind(kind) else {
+                    continue;
+                };
+                let mut graph = ResidueGraph::new();
+                let root = graph.add_residue(residue);
+                graph.set_root(root);
+                let Ok(molecule) = construct::construct_molecule(&graph) else {
+                    continue;
+                };
+                let canonical = canonical_smiles(&molecule);
+                let wurcs = format!(
+                    "WURCS=2.0/1,1,0/[{}]/1/",
+                    kind.unique_residue().expect("concrete registry entry")
+                );
+                index.insert(canonical.clone(), wurcs.clone());
+                // Public SMILES parsing may normalize explicit hydrogens and
+                // stereo-neighbour order, so index that path too.
+                if let Ok(reparsed) = parse_smiles(&canonical) {
+                    index.insert(canonical_smiles(&reparsed), wurcs);
+                }
+            }
+            index
+        })
+        .get(&canonical_smiles(molecule))
+        .cloned()
+}
+
 fn component_atoms_without_bond(
     molecule: &Molecule,
     start: chematic::core::AtomIdx,
@@ -1061,22 +1102,43 @@ fn de_novo_wurcs_for_molecule(molecule: &Molecule) -> MolResult<ResidueGraph> {
     }
     let root = nodes[roots[0]];
     graph.set_root(root);
-    if let Some(residue) = graph.residue_mut(root) {
-        if residue.anomeric_symbol == AnomericSymbol::Unknown {
-            residue.anomeric_position = 0;
-            residue.anomeric_prefix = match residue.anomeric_prefix.as_str() {
-                "Aad" => "AUd".into(),
-                "ha" => "hU".into(),
-                _ => "u".into(),
-            };
-        }
+    if let Some(residue) = graph.residue_mut(root)
+        && residue.anomeric_symbol == AnomericSymbol::Unknown
+    {
+        residue.anomeric_position = 0;
+        residue.anomeric_prefix = match residue.anomeric_prefix.as_str() {
+            "Aad" => "AUd".into(),
+            "ha" => "hU".into(),
+            _ => "u".into(),
+        };
     }
     Ok(graph)
 }
 
 fn wurcs_for_molecule(molecule: &Molecule) -> MolResult<ResidueGraph> {
-    if let Some(wurcs) = exact_wurcs_for_molecule(molecule) {
-        return parse_wurcs(wurcs).map_err(MolError::from);
+    let registry = registry_wurcs_for_molecule(molecule);
+    let corpus = exact_wurcs_for_molecule(molecule);
+    match (registry.as_deref(), corpus) {
+        (Some(registry), Some(corpus)) => {
+            let registry_graph = parse_wurcs(registry)?;
+            let corpus_graph = parse_wurcs(corpus)?;
+            let root_kind = |graph: &ResidueGraph| {
+                graph
+                    .root()
+                    .and_then(|root| graph.residue(root))
+                    .and_then(crabwurcs_core::classify_residue)
+            };
+            // Keep corpus-specific reducing-end notation when both sources
+            // describe the same residue. Prefer the registry when a corpus
+            // alias would collapse an uncommon residue to another family.
+            if root_kind(&registry_graph) == root_kind(&corpus_graph) {
+                return Ok(corpus_graph);
+            }
+            return Ok(registry_graph);
+        }
+        (Some(registry), None) => return parse_wurcs(registry).map_err(MolError::from),
+        (None, Some(corpus)) => return parse_wurcs(corpus).map_err(MolError::from),
+        (None, None) => {}
     }
     if let Some(wurcs) = embedded_corpus_wurcs(molecule)? {
         return parse_wurcs(wurcs).map_err(MolError::from);
@@ -1337,7 +1399,15 @@ pub fn wurcs_from_molecules(input: &str, format: ChemFormat) -> MolResult<Vec<Re
 /// V3000 `CFG` attributes.
 pub fn molecule_from_wurcs(graph: &ResidueGraph, format: ChemFormat) -> MolResult<String> {
     let wurcs = write_wurcs(graph)?;
-    let molecule = if let Some(smiles) = corpus_smiles_for_wurcs(&wurcs) {
+    let is_concrete_registry_monosaccharide = graph.node_count() == 1
+        && graph
+            .root()
+            .and_then(|root| graph.residue(root))
+            .and_then(crabwurcs_core::classify_residue)
+            .is_some_and(|kind| !kind.is_generic());
+    let molecule = if is_concrete_registry_monosaccharide {
+        construct::construct_molecule(graph)?
+    } else if let Some(smiles) = corpus_smiles_for_wurcs(&wurcs) {
         parse_smiles(smiles)?
     } else {
         construct::construct_molecule(graph)?
@@ -1540,8 +1610,9 @@ mod tests {
     }
 
     #[test]
-    fn every_concrete_registry_residue_constructs_without_a_corpus_lookup() {
+    fn every_concrete_registry_residue_constructs_and_reextracts_without_a_corpus_lookup() {
         let mut failures = Vec::new();
+        let mut tested = 0;
         for kind in crabwurcs_core::ResidueKind::ALL {
             if kind.is_generic() || kind.unique_residue().is_none() {
                 continue;
@@ -1550,10 +1621,36 @@ mod tests {
             let mut graph = ResidueGraph::new();
             let root = graph.add_residue(residue);
             graph.set_root(root);
-            if let Err(error) = construct::construct_molecule(&graph) {
-                failures.push(format!("{}: {error}", kind.canonical_name()));
+            tested += 1;
+            match construct::construct_molecule(&graph) {
+                Ok(_) => {
+                    for format in [ChemFormat::Smiles, ChemFormat::Mol, ChemFormat::Sdf] {
+                        let result = molecule_from_wurcs(&graph, format)
+                            .and_then(|molecule| wurcs_from_molecule(&molecule, format));
+                        match result {
+                            Ok(recovered) => {
+                                let recovered_kind = recovered
+                                    .root()
+                                    .and_then(|root| recovered.residue(root))
+                                    .and_then(crabwurcs_core::classify_residue);
+                                if recovered_kind != Some(*kind) {
+                                    failures.push(format!(
+                                        "{} ({format:?}): recovered as {recovered_kind:?}",
+                                        kind.canonical_name()
+                                    ));
+                                }
+                            }
+                            Err(error) => failures.push(format!(
+                                "{} ({format:?}): extraction failed: {error}",
+                                kind.canonical_name()
+                            )),
+                        }
+                    }
+                }
+                Err(error) => failures.push(format!("{}: {error}", kind.canonical_name())),
             }
         }
+        assert_eq!(tested, 74);
         assert!(
             failures.is_empty(),
             "registry construction failures:\n{}",

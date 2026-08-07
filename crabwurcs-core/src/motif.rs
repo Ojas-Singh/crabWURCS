@@ -280,13 +280,12 @@ fn residue_matches(pattern: &Monosaccharide, candidate: &Monosaccharide) -> bool
         return false;
     }
 
-    if !pattern_kind.is_generic() {
-        if pattern.skeleton_code != candidate.skeleton_code
+    if !pattern_kind.is_generic()
+        && (pattern.skeleton_code != candidate.skeleton_code
             || prefix_class(&pattern.anomeric_prefix) != prefix_class(&candidate.anomeric_prefix)
-            || (pattern.ring != RingClosure::Unknown && pattern.ring != candidate.ring)
-        {
-            return false;
-        }
+            || (pattern.ring != RingClosure::Unknown && pattern.ring != candidate.ring))
+    {
+        return false;
     }
 
     if pattern.anomeric_symbol != AnomericSymbol::Unknown
@@ -358,10 +357,7 @@ fn position_matches(
     let pattern_positions = std::iter::once(pattern)
         .chain(pattern_alternatives.iter().copied())
         .collect::<Vec<_>>();
-    if pattern_positions
-        .iter()
-        .any(|position| *position == CarbonPosition(0))
-    {
+    if pattern_positions.contains(&CarbonPosition(0)) {
         return true;
     }
     std::iter::once(candidate)

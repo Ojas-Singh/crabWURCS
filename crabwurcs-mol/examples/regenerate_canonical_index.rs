@@ -22,14 +22,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let molecule = chematic::smiles::parse(fields[4])?;
             let canonical = chematic::smiles::canonical_smiles(&molecule);
-            if let Some(previous) = index.insert(canonical.clone(), fields[0].to_owned()) {
-                if previous != fields[0] {
-                    return Err(format!(
-                        "canonical molecular collision maps to two WURCS:\n{previous}\n{}\n{canonical}",
-                        fields[0]
-                    )
-                    .into());
-                }
+            if let Some(previous) = index.insert(canonical.clone(), fields[0].to_owned())
+                && previous != fields[0]
+            {
+                return Err(format!(
+                    "canonical molecular collision maps to two WURCS:\n{previous}\n{}\n{canonical}",
+                    fields[0]
+                )
+                .into());
             }
             records += 1;
         }

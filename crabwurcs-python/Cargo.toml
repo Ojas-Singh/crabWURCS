@@ -1,0 +1,18 @@
+[package]
+name = "crabwurcs-python"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Python bindings for crabWURCS"
+publish = false
+
+[lib]
+name = "crabwurcs_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+crabwurcs = { workspace = true }
+pyo3 = { workspace = true }

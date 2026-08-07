@@ -2,6 +2,14 @@
 # will have compiled files and executables
 debug
 target
+dist
+site
+.venv
+.pytest_cache
+__pycache__
+*.so
+*.pyd
+.env
 glycoshape
 GLYCOSHAPE.json
 

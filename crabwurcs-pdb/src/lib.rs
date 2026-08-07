@@ -22,16 +22,44 @@ pub enum PdbError {
 
 pub type PdbResult<T> = Result<T, PdbError>;
 
+/// A graph-node provenance record retained from the source PDB/mmCIF file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PdbResidueReference {
+    pub node_index: usize,
+    pub chain: String,
+    pub sequence_number: isize,
+    pub insertion_code: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ExtractedGlycan {
     pub attachment_site: Option<String>,
     pub graph: ResidueGraph,
 }
 
+/// An extracted glycan together with the source residue identity for every
+/// graph node. The legacy [`ExtractedGlycan`] API remains available for
+/// callers that only need the graph.
+#[derive(Debug, Clone)]
+pub struct ExtractedGlycanWithProvenance {
+    pub attachment_site: Option<String>,
+    pub graph: ResidueGraph,
+    pub residues: Vec<PdbResidueReference>,
+}
+
 const PDB_COMPONENTS: &str = include_str!("../data/pdb_carbohydrate_components.tsv");
 
 fn is_sugar_residue(name: &str) -> bool {
-    pdb_component_residue(name).is_some() || glycam_residue_kind(name).is_some()
+    pdb_component_residue(name).is_some()
+        || glycam_residue_kind(name).is_some()
+        || registry_named_residue(name).is_some()
+}
+
+fn registry_named_residue(name: &str) -> Option<Monosaccharide> {
+    let kind = ResidueKind::from_name(name)?;
+    (!kind.is_generic())
+        .then(|| residue_from_kind(kind).ok())
+        .flatten()
 }
 
 fn apply_declared_form(
@@ -171,14 +199,13 @@ fn glycam_residue_kind(name: &str) -> Option<Monosaccharide> {
     }
     let ring = matches!(last, 'D' | 'U').then_some(RingClosure::Furanose);
     residue = apply_declared_form(residue, anomer, ring);
-    if matches!(last, 'S' | 's') {
-        if let Some(modification) = residue
+    if matches!(last, 'S' | 's')
+        && let Some(modification) = residue
             .modifications
             .iter_mut()
             .find(|modification| modification.descriptor == "N")
-        {
-            modification.descriptor = "NSO/3=O/3=O".into();
-        }
+    {
+        modification.descriptor = "NSO/3=O/3=O".into();
     }
     Some(residue)
 }
@@ -193,6 +220,7 @@ fn modification(position: u8, descriptor: &str) -> Modification {
 
 fn residue_to_monosaccharide(name: &str) -> Monosaccharide {
     pdb_component_residue(name)
+        .or_else(|| registry_named_residue(name))
         .or_else(|| glycam_residue_kind(name))
         .unwrap_or_else(|| {
             residue_from_kind(ResidueKind::Hex).expect("the generic hexose registry entry is valid")
@@ -210,11 +238,17 @@ pub fn extract_glycans_from_file(path: &std::path::Path) -> PdbResult<Vec<Extrac
         .read(path_str.as_ref())
         .map_err(|e| PdbError::ParseError(format!("cannot parse file: {:?}", e)))?;
 
-    extract_glycans_from_pdb(
+    Ok(extract_glycans_from_pdb_with_provenance(
         &pdb,
         &raw_pdb_residue_names(&contents),
         &raw_pdb_bonds(&contents),
-    )
+    )?
+    .into_iter()
+    .map(|glycan| ExtractedGlycan {
+        attachment_site: glycan.attachment_site,
+        graph: glycan.graph,
+    })
+    .collect())
 }
 
 pub fn extract_glycans_from_str(contents: &str, is_mmcif: bool) -> PdbResult<Vec<ExtractedGlycan>> {
@@ -229,7 +263,57 @@ pub fn extract_glycans_from_str(contents: &str, is_mmcif: bool) -> PdbResult<Vec
         .read_raw(reader)
         .map_err(|e| PdbError::ParseError(format!("cannot parse: {:?}", e)))?;
 
-    extract_glycans_from_pdb(
+    Ok(extract_glycans_from_pdb_with_provenance(
+        &pdb,
+        &raw_pdb_residue_names(contents),
+        &raw_pdb_bonds(contents),
+    )?
+    .into_iter()
+    .map(|glycan| ExtractedGlycan {
+        attachment_site: glycan.attachment_site,
+        graph: glycan.graph,
+    })
+    .collect())
+}
+
+/// Extract glycans from a PDB/mmCIF file while retaining source residue
+/// identities for every graph node.
+pub fn extract_glycans_with_provenance_from_file(
+    path: &std::path::Path,
+) -> PdbResult<Vec<ExtractedGlycanWithProvenance>> {
+    use pdbtbx::ReadOptions;
+
+    let contents = std::fs::read_to_string(path)
+        .map_err(|error| PdbError::ParseError(format!("cannot read file: {error}")))?;
+    let path_str = path.to_string_lossy();
+    let (pdb, _errors) = ReadOptions::default()
+        .set_level(pdbtbx::StrictnessLevel::Loose)
+        .read(path_str.as_ref())
+        .map_err(|e| PdbError::ParseError(format!("cannot parse file: {:?}", e)))?;
+    extract_glycans_from_pdb_with_provenance(
+        &pdb,
+        &raw_pdb_residue_names(&contents),
+        &raw_pdb_bonds(&contents),
+    )
+}
+
+/// Extract glycans from a PDB or mmCIF string while retaining source residue
+/// identities for every graph node.
+pub fn extract_glycans_with_provenance_from_str(
+    contents: &str,
+    is_mmcif: bool,
+) -> PdbResult<Vec<ExtractedGlycanWithProvenance>> {
+    use pdbtbx::{Format, ReadOptions, StrictnessLevel};
+    use std::io::BufReader;
+
+    let format = if is_mmcif { Format::Mmcif } else { Format::Pdb };
+    let reader = BufReader::new(contents.as_bytes());
+    let (pdb, _errors) = ReadOptions::default()
+        .set_level(StrictnessLevel::Loose)
+        .set_format(format)
+        .read_raw(reader)
+        .map_err(|e| PdbError::ParseError(format!("cannot parse: {:?}", e)))?;
+    extract_glycans_from_pdb_with_provenance(
         &pdb,
         &raw_pdb_residue_names(contents),
         &raw_pdb_bonds(contents),
@@ -283,15 +367,16 @@ fn raw_pdb_residue_names(contents: &str) -> HashMap<(isize, String), String> {
     names
 }
 
-fn extract_glycans_from_pdb(
+fn extract_glycans_from_pdb_with_provenance(
     pdb: &pdbtbx::PDB,
     raw_names: &HashMap<(isize, String), String>,
     raw_bonds: &[(usize, usize)],
-) -> PdbResult<Vec<ExtractedGlycan>> {
+) -> PdbResult<Vec<ExtractedGlycanWithProvenance>> {
     #[derive(Debug, Clone)]
     struct ResidueMeta {
         name: String,
         sequence: isize,
+        insertion_code: Option<String>,
         chain: String,
         order: usize,
     }
@@ -314,13 +399,14 @@ fn extract_glycans_from_pdb(
         let next_order = residues.len();
         residues.entry(residue_key).or_insert_with(|| {
             let parsed_name = hierarchy.residue().name().unwrap_or("UNK");
-            let sequence = hierarchy.residue().id().0;
+            let (sequence, insertion_code) = hierarchy.residue().id();
             ResidueMeta {
                 name: raw_names
                     .get(&(sequence, parsed_name.to_string()))
                     .cloned()
                     .unwrap_or_else(|| parsed_name.to_string()),
                 sequence,
+                insertion_code: insertion_code.map(str::to_string),
                 chain: hierarchy.chain().id().to_string(),
                 order: next_order,
             }
@@ -646,6 +732,7 @@ fn extract_glycans_from_pdb(
 
         let mut graph = ResidueGraph::new();
         let mut nodes = HashMap::new();
+        let mut source_residues = Vec::with_capacity(ordered.len());
         for key in &ordered {
             let mut residue = inferred_residues
                 .get(key)
@@ -675,6 +762,12 @@ fn extract_glycans_from_pdb(
             });
             let node = graph.add_residue(residue);
             nodes.insert(*key, node);
+            source_residues.push(PdbResidueReference {
+                node_index: node.index(),
+                chain: residues[key].chain.clone(),
+                sequence_number: residues[key].sequence,
+                insertion_code: residues[key].insertion_code.clone(),
+            });
         }
         for &(parent, child, parent_position, child_position) in &glycosidic {
             if component.contains(&parent) && component.contains(&child) {
@@ -713,9 +806,10 @@ fn extract_glycans_from_pdb(
                     residue.chain, residue.name, residue.sequence
                 ))
             });
-        extracted.push(ExtractedGlycan {
+        extracted.push(ExtractedGlycanWithProvenance {
             attachment_site,
             graph,
+            residues: source_residues,
         });
     }
 
@@ -867,6 +961,25 @@ mod tests {
     }
 
     #[test]
+    fn every_concrete_registry_name_is_recognized_for_mmcif_and_private_components() {
+        let concrete = ResidueKind::ALL
+            .iter()
+            .copied()
+            .filter(|kind| !kind.is_generic())
+            .collect::<Vec<_>>();
+        assert_eq!(concrete.len(), 74);
+        for kind in concrete {
+            let name = kind.canonical_name();
+            assert!(is_sugar_residue(name), "{name}");
+            assert_eq!(
+                residue_to_monosaccharide(name).residue_kind,
+                Some(kind),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
     fn test_parse_minimal_pdb_with_sugar() {
         let lines = [
             "HEADER    TEST                                                            END"
@@ -884,6 +997,77 @@ mod tests {
         let glycans = result.unwrap();
         assert_eq!(glycans.len(), 1);
         assert!(glycans[0].graph.node_count() >= 2);
+    }
+
+    #[test]
+    fn mmcif_fixture_extracts_registry_sugar_with_provenance() {
+        let mmcif = r#"data_crabwurcs
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.auth_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.pdbx_formal_charge
+_atom_site.pdbx_PDB_model_num
+HETATM 1 C C1 . NAG A B 1 1 42 . -1.0 0.0 0.0 1.0 0.0 0 1
+HETATM 2 O O4 . NAG A B 1 1 42 .  0.0 0.0 0.0 1.0 0.0 0 1
+"#;
+        let glycans = extract_glycans_with_provenance_from_str(mmcif, true).unwrap();
+        assert_eq!(glycans.len(), 1);
+        assert_eq!(glycans[0].residues.len(), 1);
+        assert_eq!(glycans[0].residues[0].chain, "B");
+        assert_eq!(glycans[0].residues[0].sequence_number, 42);
+        let root = glycans[0].graph.root().unwrap();
+        assert_eq!(
+            crabwurcs_core::classify_residue(glycans[0].graph.residue(root).unwrap()),
+            Some(ResidueKind::GlcNAc)
+        );
+    }
+
+    #[test]
+    fn provenance_tracks_source_chain_and_sequence_for_each_node() {
+        let lines = [
+            "HEADER    TEST                                                            END"
+                .to_string(),
+            make_hetatm_line(1, "C1", "NAG", "B", 17, -1.0, 0.0, 0.0),
+            make_hetatm_line(2, "O4", "NAG", "B", 17, 0.0, 0.0, 0.0),
+            make_hetatm_line(3, "C1", "BMA", "B", 18, 1.4, 0.0, 0.0),
+            "CONECT    2    3".to_string(),
+            "END".to_string(),
+        ];
+        let pdb_str = lines.join("\n") + "\n";
+        let glycans = extract_glycans_with_provenance_from_str(&pdb_str, false).unwrap();
+        assert_eq!(glycans.len(), 1);
+        assert_eq!(glycans[0].residues.len(), glycans[0].graph.node_count());
+        assert_eq!(
+            glycans[0]
+                .residues
+                .iter()
+                .map(|residue| (residue.chain.as_str(), residue.sequence_number))
+                .collect::<Vec<_>>(),
+            vec![("B", 17), ("B", 18)]
+        );
+        assert_eq!(
+            glycans[0]
+                .residues
+                .iter()
+                .map(|residue| residue.node_index)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
     }
 
     #[test]
