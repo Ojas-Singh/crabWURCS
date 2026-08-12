@@ -26,6 +26,9 @@
 #![doc = include_str!("../docs/rendering.md")]
 #![doc = include_str!("../docs/motif-highlighting.md")]
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
 pub use crabwurcs_core as core;
 pub use crabwurcs_iupac as iupac;
 pub use crabwurcs_mol as mol;
@@ -36,7 +39,8 @@ pub use crabwurcs_snfg as snfg;
 // consumers don't need to reach into `core::`.
 pub use crabwurcs_core::{
     CoreError, CoreResult, MotifError, MotifMatch, ResidueGraph, ResidueKind, classify_residue,
-    find_motif_matches, residue_from_kind, write_wurcs_canonical,
+    find_motif_matches, normalize_wurcs, residue_from_kind, standardize_wurcs,
+    write_wurcs_canonical,
 };
 pub use crabwurcs_iupac::write_iupac_condensed_canonical;
 pub use crabwurcs_pdb::{
@@ -118,13 +122,45 @@ fn corpus_records() -> impl Iterator<Item = CorpusRecord<'static>> {
         })
 }
 
+fn corpus_wurcs_normalizations() -> &'static HashMap<&'static str, String> {
+    static NORMALIZED: OnceLock<HashMap<&'static str, String>> = OnceLock::new();
+    NORMALIZED.get_or_init(|| {
+        corpus_records()
+            .filter_map(|record| {
+                let graph = core::parse_wurcs(record.wurcs).ok()?;
+                let normalized = core::write_wurcs(&graph).ok()?;
+                Some((record.wurcs, normalized))
+            })
+            .collect()
+    })
+}
+
+fn normalized_wurcs_corpus() -> &'static HashMap<String, CorpusRecord<'static>> {
+    static NORMALIZED: OnceLock<HashMap<String, CorpusRecord<'static>>> = OnceLock::new();
+    NORMALIZED.get_or_init(|| {
+        corpus_records()
+            .filter_map(|record| {
+                let normalized = corpus_wurcs_normalizations().get(record.wurcs)?;
+                Some((normalized.clone(), record))
+            })
+            .collect()
+    })
+}
+
 fn corpus_record_for_input(input: &str, format: Format) -> Option<CorpusRecord<'static>> {
     let input = input.trim();
     if input.is_empty() {
         return None;
     }
+    if format == Format::Wurcs {
+        if let Some(record) = corpus_records().find(|record| record.wurcs == input) {
+            return Some(record);
+        }
+        let normalized = core::normalize_wurcs(input).ok()?;
+        return normalized_wurcs_corpus().get(&normalized).copied();
+    }
     corpus_records().find(|record| match format {
-        Format::Wurcs => record.wurcs == input,
+        Format::Wurcs => unreachable!("handled above"),
         Format::IupacCondensed => record.iupac == input,
         Format::IupacExtended => record.iupac_extended == input,
         Format::Glycam => record.glycam == input,
@@ -241,6 +277,13 @@ pub fn convert(input: &str, from: Format, to: Format) -> ConversionResult<String
     if let Some(output) =
         corpus_record_for_input(input, resolved_from).and_then(|record| record.notation(to))
     {
+        if to == Format::Wurcs {
+            if let Some(normalized) = corpus_wurcs_normalizations().get(output) {
+                return Ok(normalized.clone());
+            }
+            let graph = core::parse_wurcs(output)?;
+            return Ok(core::write_wurcs(&graph)?);
+        }
         return Ok(output.to_owned());
     }
     write_notation(&parse_notation(input, from)?, to)
@@ -260,6 +303,15 @@ mod tests {
         assert_eq!(
             convert(&smiles, Format::Smiles, Format::Wurcs).unwrap(),
             WURCS
+        );
+    }
+
+    #[test]
+    fn wurcs_conversion_normalizes_reordered_input() {
+        let reordered = "WURCS=2.0/2,2,1/[a2112h-1b_1-5][u2122h]/1-2/b3-a1";
+        assert_eq!(
+            convert(reordered, Format::Wurcs, Format::Wurcs).unwrap(),
+            "WURCS=2.0/2,2,1/[u2122h][a2112h-1b_1-5]/1-2/a3-b1"
         );
     }
 
@@ -297,7 +349,7 @@ mod tests {
 
             assert_eq!(
                 convert(record.smiles, Format::Smiles, Format::Wurcs).unwrap(),
-                record.wurcs
+                corpus_wurcs_normalizations()[record.wurcs]
             );
         }
     }
@@ -360,18 +412,25 @@ mod tests {
                             Format::Auto => false,
                         })
                         .filter_map(|candidate| candidate.notation(to))
+                        .map(|expected| {
+                            if to == Format::Wurcs {
+                                corpus_wurcs_normalizations()[expected].clone()
+                            } else {
+                                expected.to_owned()
+                            }
+                        })
                         .collect::<Vec<_>>();
                     if expected.is_empty() {
                         continue;
                     }
                     let explicit = convert(input, from, to).unwrap();
                     assert!(
-                        expected.contains(&explicit.as_str()),
+                        expected.contains(&explicit),
                         "{from:?} -> {to:?}: {input}\noutput: {explicit}\nexpected one of: {expected:?}"
                     );
                     let automatic = convert(input, Format::Auto, to).unwrap();
                     assert!(
-                        expected.contains(&automatic.as_str()),
+                        expected.contains(&automatic),
                         "auto({from:?}) -> {to:?}: {input}\noutput: {automatic}\nexpected one of: {expected:?}"
                     );
                 }

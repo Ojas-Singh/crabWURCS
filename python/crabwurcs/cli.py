@@ -27,6 +27,10 @@ def _parser() -> argparse.ArgumentParser:
     conversion.add_argument("--from", dest="from_format", default="auto")
     conversion.add_argument("--to", dest="to_format", required=True)
 
+    normalization = commands.add_parser("normalize-wurcs", help="normalize WURCS 2.0 text")
+    normalization.add_argument("input", nargs="?")
+    normalization.add_argument("--input-file", action="store_true")
+
     mol_to = commands.add_parser("mol-to-wurcs", help="extract WURCS from MOL/SDF/SMILES")
     mol_to.add_argument("input", nargs="?")
     mol_to.add_argument("--format", required=True, choices=("mol", "sdf", "smiles"))
@@ -54,6 +58,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         if args.command == "convert":
             print(convert(_text(args.input, args.input_file), args.to_format, args.from_format))
+        elif args.command == "normalize-wurcs":
+            from . import normalize_wurcs
+
+            print(normalize_wurcs(_text(args.input, args.input_file)))
         elif args.command == "mol-to-wurcs":
             print(convert(_text(args.input, bool(args.input)), Format.WURCS, args.format))
         elif args.command == "wurcs-to-mol":

@@ -8,7 +8,10 @@ use nom::IResult;
 use nom::bytes::complete::{tag, take_until};
 use nom::character::complete::char;
 use nom::sequence::delimited;
+use petgraph::Direction;
+use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 type ParsedWurcsParts = (WURCSHeader, Vec<String>, Vec<u32>, String);
 type ParsedEndpoint = (u32, Vec<u8>, Option<String>, Option<u8>);
@@ -22,21 +25,42 @@ pub fn parse_wurcs(input: &str) -> CoreResult<ResidueGraph> {
         })?;
 
     let mut graph = assemble_graph(&header, &unique_residues, &sequence, &linkages)?;
+    if let Some(issue) =
+        normalization_coverage_issue(&header, &unique_residues, &sequence, &linkages, &graph)
+    {
+        graph.set_normalization_issue(issue);
+    }
     graph.set_source_wurcs(input.to_string());
     Ok(graph)
 }
 
 pub fn write_wurcs(graph: &ResidueGraph) -> CoreResult<String> {
-    write_wurcs_impl(graph, true)
+    match write_wurcs_canonical(graph) {
+        Ok(value) => Ok(value),
+        Err(CoreError::UnsupportedNormalization(_)) => {
+            graph.source_wurcs().map(str::to_owned).ok_or_else(|| {
+                CoreError::UnsupportedNormalization(
+                    graph
+                        .normalization_issue()
+                        .unwrap_or("the graph has no lossless source representation")
+                        .to_owned(),
+                )
+            })
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Serialize a graph to canonical WURCS without reusing a preserved source
 /// string from parsing.
 pub fn write_wurcs_canonical(graph: &ResidueGraph) -> CoreResult<String> {
-    write_wurcs_impl(graph, false)
+    if let Some(issue) = graph.normalization_issue() {
+        return Err(CoreError::UnsupportedNormalization(issue.to_owned()));
+    }
+    write_wurcs_impl(graph)
 }
 
-fn write_wurcs_impl(graph: &ResidueGraph, preserve_source: bool) -> CoreResult<String> {
+fn write_wurcs_impl(graph: &ResidueGraph) -> CoreResult<String> {
     if let Some(name) = graph
         .inner()
         .node_weights()
@@ -53,45 +77,18 @@ fn write_wurcs_impl(graph: &ResidueGraph, preserve_source: bool) -> CoreResult<S
             kind.canonical_name().to_string(),
         ));
     }
-    if preserve_source && let Some(source) = graph.source_wurcs() {
-        return Ok(source.to_string());
-    }
     let inner = graph.inner();
     let node_count = inner.node_count();
     let edge_count = inner.edge_count()
         + graph.undefined_linkages().len()
         + graph.undefined_modifications().len();
 
-    let mut residue_map: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
+    let mut residue_map: HashMap<String, usize> = HashMap::new();
     let mut unique_residues: Vec<String> = Vec::new();
     let mut sequence: Vec<usize> = Vec::new();
 
-    let mut node_to_seq_pos: std::collections::HashMap<usize, usize> =
-        std::collections::HashMap::new();
-    let mut ordered_nodes = Vec::with_capacity(node_count);
-    let mut visited = std::collections::HashSet::new();
-    let mut queue = std::collections::VecDeque::new();
-    if let Some(root) = graph.root().or_else(|| inner.node_indices().next()) {
-        queue.push_back(root);
-    }
-    while let Some(node) = queue.pop_front() {
-        if !visited.insert(node) {
-            continue;
-        }
-        ordered_nodes.push(node);
-        let mut children: Vec<_> = inner
-            .edges_directed(node, petgraph::Direction::Outgoing)
-            .map(|edge| (edge.target(), edge.weight().parent_position.0))
-            .collect();
-        children.sort_by_key(|(_, position)| *position);
-        for (child, _) in children {
-            if !visited.contains(&child) {
-                queue.push_back(child);
-            }
-        }
-    }
-    ordered_nodes.extend(inner.node_indices().filter(|node| !visited.contains(node)));
+    let mut node_to_seq_pos: HashMap<usize, usize> = HashMap::new();
+    let ordered_nodes = canonical_node_order(graph);
 
     for (seq_pos, ni) in ordered_nodes.into_iter().enumerate() {
         if let Some(residue) = inner.node_weight(ni) {
@@ -120,14 +117,16 @@ fn write_wurcs_impl(graph: &ResidueGraph, preserve_source: bool) -> CoreResult<S
             // Use sequence position (0-based) instead of node index
             let parent_seq = *node_to_seq_pos.get(&parent.index()).unwrap_or(&0);
             let child_seq = *node_to_seq_pos.get(&child.index()).unwrap_or(&0);
-            let parent_letter = (b'a' + parent_seq as u8) as char;
-            let child_letter = (b'a' + child_seq as u8) as char;
+            let parent_label = sequence_label(parent_seq + 1);
+            let child_label = sequence_label(child_seq + 1);
 
             let mut parent_endpoint = linkage
                 .parent_positions()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
                 .map(|position| {
                     format_endpoint_with_map(
-                        parent_letter,
+                        &parent_label,
                         position,
                         linkage.parent_direction.as_deref(),
                         linkage.parent_modification_position,
@@ -140,9 +139,11 @@ fn write_wurcs_impl(graph: &ResidueGraph, preserve_source: bool) -> CoreResult<S
             }
             let mut child_endpoint = linkage
                 .child_positions()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
                 .map(|position| {
                     format_endpoint_with_map(
-                        child_letter,
+                        &child_label,
                         position,
                         linkage.child_direction.as_deref(),
                         linkage.child_modification_position,
@@ -172,12 +173,14 @@ fn write_wurcs_impl(graph: &ResidueGraph, preserve_source: bool) -> CoreResult<S
         let Some(child_seq) = node_to_seq_pos.get(&undefined.child.index()) else {
             continue;
         };
-        let child_letter = (b'a' + *child_seq as u8) as char;
+        let child_label = sequence_label(*child_seq + 1);
         let child_endpoint = undefined
             .child_positions
             .iter()
             .copied()
-            .map(|position| format_endpoint(child_letter, position))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(|position| format_endpoint(&child_label, position))
             .collect::<Vec<_>>()
             .join("|");
         let mut parent_endpoints = Vec::new();
@@ -185,15 +188,16 @@ fn write_wurcs_impl(graph: &ResidueGraph, preserve_source: bool) -> CoreResult<S
             let Some(parent_seq) = node_to_seq_pos.get(&parent.residue.index()) else {
                 continue;
             };
-            let parent_letter = (b'a' + *parent_seq as u8) as char;
+            let parent_label = sequence_label(*parent_seq + 1);
             parent_endpoints.extend(
                 parent
                     .positions
                     .iter()
                     .copied()
-                    .map(|position| format_endpoint(parent_letter, position)),
+                    .map(|position| format_endpoint(&parent_label, position)),
             );
         }
+        parent_endpoints.sort();
         edge_parts.push(format!(
             "{}-{}{}",
             child_endpoint,
@@ -208,15 +212,16 @@ fn write_wurcs_impl(graph: &ResidueGraph, preserve_source: bool) -> CoreResult<S
             let Some(parent_seq) = node_to_seq_pos.get(&parent.residue.index()) else {
                 continue;
             };
-            let parent_letter = (b'a' + *parent_seq as u8) as char;
+            let parent_label = sequence_label(*parent_seq + 1);
             parent_endpoints.extend(
                 parent
                     .positions
                     .iter()
                     .copied()
-                    .map(|position| format_endpoint(parent_letter, position)),
+                    .map(|position| format_endpoint(&parent_label, position)),
             );
         }
+        parent_endpoints.sort();
         edge_parts.push(format!(
             "{}}}{}",
             parent_endpoints.join("|"),
@@ -224,14 +229,7 @@ fn write_wurcs_impl(graph: &ResidueGraph, preserve_source: bool) -> CoreResult<S
         ));
     }
 
-    edge_parts.sort_by_key(|part| {
-        part.chars()
-            .skip(1)
-            .take_while(char::is_ascii_digit)
-            .collect::<String>()
-            .parse::<u8>()
-            .unwrap_or(u8::MAX)
-    });
+    edge_parts.sort();
 
     let linkage_str = edge_parts.join("_");
 
@@ -253,7 +251,7 @@ fn write_wurcs_impl(graph: &ResidueGraph, preserve_source: bool) -> CoreResult<S
     Ok(format!("{}/{}/{}/{}", header, ur_str, seq_str, linkage_str))
 }
 
-fn format_endpoint(residue: char, position: CarbonPosition) -> String {
+fn format_endpoint(residue: &str, position: CarbonPosition) -> String {
     if position.0 == 0 {
         format!("{residue}?")
     } else {
@@ -262,7 +260,7 @@ fn format_endpoint(residue: char, position: CarbonPosition) -> String {
 }
 
 fn format_endpoint_with_map(
-    residue: char,
+    residue: &str,
     position: CarbonPosition,
     direction: Option<&str>,
     modification_position: Option<u8>,
@@ -275,6 +273,162 @@ fn format_endpoint_with_map(
         endpoint.push_str(&position.to_string());
     }
     endpoint
+}
+
+fn sequence_label(mut id: usize) -> String {
+    const ALPHABET: &[u8; 52] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let mut label = Vec::new();
+    while id > 0 {
+        let digit = (id - 1) % 52;
+        label.push(ALPHABET[digit] as char);
+        id = (id - 1) / 52;
+    }
+    label.into_iter().rev().collect()
+}
+
+fn linkage_order_key(linkage: &Linkage) -> String {
+    let positions = |values: Vec<CarbonPosition>| {
+        let mut values = values.into_iter().map(|value| value.0).collect::<Vec<_>>();
+        values.sort_unstable();
+        values
+            .into_iter()
+            .map(|value| format!("{value:03}"))
+            .collect::<Vec<_>>()
+            .join("|")
+    };
+    format!(
+        "{}:{}:{}:{}:{}:{}:{}:{}:{}",
+        positions(linkage.parent_positions().collect()),
+        positions(linkage.child_positions().collect()),
+        linkage.parent_direction.as_deref().unwrap_or(""),
+        linkage.parent_modification_position.unwrap_or(0),
+        linkage.child_direction.as_deref().unwrap_or(""),
+        linkage.child_modification_position.unwrap_or(0),
+        linkage.map_code.as_deref().unwrap_or(""),
+        linkage
+            .repeat
+            .as_ref()
+            .map(RepeatCount::to_wurcs)
+            .unwrap_or_default(),
+        linkage.cyclic,
+    )
+}
+
+fn rank_strings(values: &HashMap<NodeIndex, String>) -> HashMap<NodeIndex, usize> {
+    let unique = values.values().cloned().collect::<BTreeSet<_>>();
+    let ranks = unique
+        .into_iter()
+        .enumerate()
+        .map(|(rank, value)| (value, rank))
+        .collect::<BTreeMap<_, _>>();
+    values
+        .iter()
+        .map(|(node, value)| (*node, ranks[value]))
+        .collect()
+}
+
+fn canonical_node_ranks(graph: &ResidueGraph) -> HashMap<NodeIndex, usize> {
+    let inner = graph.inner();
+    let initial = inner
+        .node_indices()
+        .map(|node| (node, write_unique_residue(&inner[node])))
+        .collect::<HashMap<_, _>>();
+    let mut ranks = rank_strings(&initial);
+
+    for _ in 0..inner.node_count().max(1) {
+        let descriptors = inner
+            .node_indices()
+            .map(|node| {
+                let mut neighbors = Vec::new();
+                for edge in inner.edges_directed(node, Direction::Outgoing) {
+                    neighbors.push(format!(
+                        "O:{}:{}",
+                        linkage_order_key(edge.weight()),
+                        ranks[&edge.target()]
+                    ));
+                }
+                for edge in inner.edges_directed(node, Direction::Incoming) {
+                    neighbors.push(format!(
+                        "I:{}:{}",
+                        linkage_order_key(edge.weight()),
+                        ranks[&edge.source()]
+                    ));
+                }
+                neighbors.sort();
+                (node, format!("{}|{}", initial[&node], neighbors.join(",")))
+            })
+            .collect::<HashMap<_, _>>();
+        let next = rank_strings(&descriptors);
+        if next == ranks {
+            break;
+        }
+        ranks = next;
+    }
+    ranks
+}
+
+fn canonical_node_order(graph: &ResidueGraph) -> Vec<NodeIndex> {
+    let inner = graph.inner();
+    let ranks = canonical_node_ranks(graph);
+    let residue_keys = inner
+        .node_indices()
+        .map(|node| (node, write_unique_residue(&inner[node])))
+        .collect::<HashMap<_, _>>();
+    let mut ordered = Vec::with_capacity(inner.node_count());
+    let mut visited = HashSet::new();
+
+    while visited.len() < inner.node_count() {
+        let remaining = inner
+            .node_indices()
+            .filter(|node| !visited.contains(node))
+            .collect::<Vec<_>>();
+        let mut roots = remaining
+            .iter()
+            .copied()
+            .filter(|node| {
+                !inner
+                    .edges_directed(*node, Direction::Incoming)
+                    .any(|edge| !visited.contains(&edge.source()))
+            })
+            .collect::<Vec<_>>();
+        if roots.is_empty() {
+            roots = remaining;
+        }
+        roots.sort_by_key(|node| (ranks[node], residue_keys[node].clone(), node.index()));
+        let mut stack = vec![roots[0]];
+        while let Some(node) = stack.pop() {
+            if !visited.insert(node) {
+                continue;
+            }
+            ordered.push(node);
+            let mut neighbors = Vec::new();
+            for edge in inner.edges_directed(node, Direction::Outgoing) {
+                neighbors.push((
+                    0u8,
+                    linkage_order_key(edge.weight()),
+                    ranks[&edge.target()],
+                    residue_keys[&edge.target()].clone(),
+                    edge.target(),
+                ));
+            }
+            for edge in inner.edges_directed(node, Direction::Incoming) {
+                neighbors.push((
+                    1u8,
+                    linkage_order_key(edge.weight()),
+                    ranks[&edge.source()],
+                    residue_keys[&edge.source()].clone(),
+                    edge.source(),
+                ));
+            }
+            neighbors.sort_by_key(|item| (item.0, item.1.clone(), item.2, item.3.clone()));
+            for (_, _, _, _, neighbor) in neighbors.into_iter().rev() {
+                if !visited.contains(&neighbor) {
+                    stack.push(neighbor);
+                }
+            }
+        }
+    }
+    ordered
 }
 
 fn write_unique_residue(residue: &Monosaccharide) -> String {
@@ -336,7 +490,18 @@ fn write_unique_residue(residue: &Monosaccharide) -> String {
         segments.push(format!("{}-{}", ring_start, ring_end));
     }
 
-    for m in &residue.modifications {
+    let mut modifications = residue.modifications.iter().collect::<Vec<_>>();
+    modifications.sort_by_key(|modification| {
+        (
+            modification.position.0,
+            modification.descriptor.as_str(),
+            modification
+                .probability
+                .map(Probability::to_wurcs)
+                .unwrap_or_default(),
+        )
+    });
+    for m in modifications {
         let position = if m.position.0 == 0 {
             "?".to_string()
         } else {
@@ -352,20 +517,127 @@ fn write_unique_residue(residue: &Monosaccharide) -> String {
     segments.join("_")
 }
 
-pub fn standardize_wurcs(input: &str) -> CoreResult<String> {
+pub fn normalize_wurcs(input: &str) -> CoreResult<String> {
     let graph = parse_wurcs(input)?;
     write_wurcs_canonical(&graph)
 }
 
+/// Backward-compatible name for [`normalize_wurcs`].
+pub fn standardize_wurcs(input: &str) -> CoreResult<String> {
+    normalize_wurcs(input)
+}
+
 #[derive(Debug)]
 struct WURCSHeader {
-    #[allow(dead_code)]
     unique_residue_count: u32,
-    #[allow(dead_code)]
     total_residue_count: u32,
-    #[allow(dead_code)]
     linkage_count: u32,
     composition: bool,
+}
+
+fn normalization_coverage_issue(
+    header: &WURCSHeader,
+    unique_residues: &[String],
+    sequence: &[u32],
+    linkage_str: &str,
+    graph: &ResidueGraph,
+) -> Option<String> {
+    if unique_residues.len() != header.unique_residue_count as usize {
+        return Some("the UniqueRES count does not match the parsed records".to_owned());
+    }
+    if sequence.len() != header.total_residue_count as usize {
+        return Some("the residue count does not match the sequence".to_owned());
+    }
+    if sequence
+        .iter()
+        .any(|index| *index == 0 || *index as usize > unique_residues.len())
+    {
+        return Some("the residue sequence contains an invalid UniqueRES index".to_owned());
+    }
+    if let Some(residue) = unique_residues
+        .iter()
+        .find(|residue| !residue_is_fully_modeled(residue))
+    {
+        return Some(format!(
+            "UniqueRES [{residue}] contains syntax not represented by the editable graph"
+        ));
+    }
+
+    let segments = if linkage_str.is_empty() {
+        Vec::new()
+    } else {
+        linkage_str.split('_').collect::<Vec<_>>()
+    };
+    if segments.len() != header.linkage_count as usize {
+        return Some("the linkage count does not match the LIN records".to_owned());
+    }
+    if segments.iter().any(|segment| {
+        segment
+            .rsplit_once('~')
+            .is_some_and(|(_, count)| RepeatCount::parse(count).is_none())
+            || (segment.contains('%')
+                && segment
+                    .split('%')
+                    .skip(1)
+                    .step_by(2)
+                    .any(|value| Probability::parse_wurcs(value).is_none()))
+    }) {
+        return Some("a linkage contains an unsupported repeat or probability".to_owned());
+    }
+    let parsed_linkages = parse_linkages(linkage_str);
+    if parsed_linkages.len() != segments.len()
+        || graph.edge_count()
+            + graph.undefined_linkages().len()
+            + graph.undefined_modifications().len()
+            != parsed_linkages.len()
+    {
+        return Some("one or more LIN records could not be represented losslessly".to_owned());
+    }
+    None
+}
+
+fn residue_is_fully_modeled(input: &str) -> bool {
+    let parts = input.split('_').collect::<Vec<_>>();
+    let Some(header) = parts.first().copied() else {
+        return false;
+    };
+    let (_, rest) = parse_anomeric_prefix(header);
+    let (backbone, _, after_ring) = parse_backbone_and_ring(rest);
+    if backbone.is_empty() {
+        return false;
+    }
+    if let Some(anomer) = after_ring.strip_prefix('-') {
+        let (position, _, trailing) = parse_anomeric_info(anomer);
+        if position == 0 || !trailing.is_empty() {
+            return false;
+        }
+    } else if !after_ring.is_empty() {
+        return false;
+    }
+
+    if parse_legacy_misplaced_anomer(&parts).is_some() {
+        return true;
+    }
+    let mut index = 1;
+    if let Some(part) = parts.get(index)
+        && !part.contains('*')
+    {
+        let Some((start, end)) = part.split_once('-') else {
+            return false;
+        };
+        if !matches!(start, "?" | "") && start.parse::<u8>().is_err() {
+            return false;
+        }
+        if !matches!(end, "?" | "") && end.parse::<u8>().is_err() {
+            return false;
+        }
+        index += 1;
+    }
+    parts.iter().skip(index).all(|part| {
+        part.split_once('*').is_some_and(|(location, descriptor)| {
+            !descriptor.is_empty() && parse_modification_location(location).is_some()
+        })
+    })
 }
 
 fn parse_wurcs_parts(input: &str) -> IResult<&str, ParsedWurcsParts> {
@@ -623,7 +895,7 @@ fn parse_modification_location(value: &str) -> Option<(u8, Option<Probability>)>
 
 fn parse_anomeric_prefix(input: &str) -> (String, &str) {
     if input.is_empty() {
-        return (String::from("x"), input);
+        return (String::new(), input);
     }
     // Prefixes have a small grammar; skeletons may themselves begin with
     // `x` or `d`, so consuming an arbitrary letter run erases generic and
@@ -641,7 +913,7 @@ fn parse_anomeric_prefix(input: &str) -> (String, &str) {
         let end = prefix.len_utf8();
         (input[..end].to_string(), &input[end..])
     } else {
-        (String::from("x"), input)
+        (String::new(), input)
     }
 }
 
@@ -1011,8 +1283,12 @@ fn parse_endpoint(endpoint: &str) -> Option<ParsedEndpoint> {
     let mut direction = None;
     let mut modification_position = None;
     for alternative in endpoint.split('|') {
-        residue = residue.or_else(|| extract_seq_index(alternative));
-        let remainder = &alternative[alternative.chars().next()?.len_utf8()..];
+        let (sequence, label_len) = extract_seq_index_prefix(alternative)?;
+        residue = residue.or(Some(sequence));
+        if residue != Some(sequence) {
+            return None;
+        }
+        let remainder = &alternative[label_len..];
         let position_end = remainder
             .find(|character: char| !character.is_ascii_digit() && character != '?')
             .unwrap_or(remainder.len());
@@ -1050,12 +1326,25 @@ fn extract_last_number(s: &str) -> Option<u8> {
 }
 
 fn extract_seq_index(s: &str) -> Option<u32> {
-    let first_char = s.chars().next()?;
-    if first_char.is_ascii_lowercase() {
-        Some((first_char as u32).wrapping_sub('a' as u32) + 1)
-    } else {
-        None
+    extract_seq_index_prefix(s).map(|(index, _)| index)
+}
+
+fn extract_seq_index_prefix(value: &str) -> Option<(u32, usize)> {
+    let label_len = value
+        .char_indices()
+        .take_while(|(_, character)| character.is_ascii_alphabetic())
+        .map(|(index, character)| index + character.len_utf8())
+        .last()?;
+    let mut id = 0u32;
+    for character in value[..label_len].chars() {
+        let digit = if character.is_ascii_lowercase() {
+            character as u32 - 'a' as u32 + 1
+        } else {
+            character as u32 - 'A' as u32 + 27
+        };
+        id = id.checked_mul(52)?.checked_add(digit)?;
     }
+    Some((id, label_len))
 }
 
 #[cfg(test)]
@@ -1437,7 +1726,7 @@ mod tests {
     fn canonical_writer_does_not_reuse_the_preserved_wurcs_source() {
         let source = "WURCS=2.0/2,1,0/[u2122h][u2112h]/1/";
         let graph = parse_wurcs(source).unwrap();
-        assert_eq!(write_wurcs(&graph).unwrap(), source);
+        assert_eq!(write_wurcs(&graph).unwrap(), "WURCS=2.0/1,1,0/[u2122h]/1/");
         assert_eq!(
             write_wurcs_canonical(&graph).unwrap(),
             "WURCS=2.0/1,1,0/[u2122h]/1/"
@@ -1446,5 +1735,28 @@ mod tests {
             standardize_wurcs(source).unwrap(),
             write_wurcs_canonical(&graph).unwrap()
         );
+    }
+
+    #[test]
+    fn equivalent_residue_and_unique_res_orders_normalize_identically() {
+        let canonical = "WURCS=2.0/2,2,1/[u2122h][a2112h-1b_1-5]/1-2/a3-b1";
+        let reordered = "WURCS=2.0/2,2,1/[a2112h-1b_1-5][u2122h]/1-2/b3-a1";
+        assert_eq!(normalize_wurcs(canonical).unwrap(), canonical);
+        assert_eq!(normalize_wurcs(reordered).unwrap(), canonical);
+        assert_eq!(
+            normalize_wurcs(&normalize_wurcs(reordered).unwrap()).unwrap(),
+            canonical
+        );
+    }
+
+    #[test]
+    fn unsupported_normalization_is_strict_but_default_writing_is_lossless() {
+        let source = "WURCS=2.0/1,1,0/[a2122h-1a_1-5_2|3*OC]/1/";
+        let graph = parse_wurcs(source).unwrap();
+        assert!(matches!(
+            normalize_wurcs(source),
+            Err(CoreError::UnsupportedNormalization(_))
+        ));
+        assert_eq!(write_wurcs(&graph).unwrap(), source);
     }
 }

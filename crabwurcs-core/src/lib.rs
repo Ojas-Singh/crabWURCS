@@ -5,7 +5,9 @@ pub mod motif;
 pub mod registry;
 
 pub use error::{CoreError, CoreResult};
-pub use grammar::{parse_wurcs, standardize_wurcs, write_wurcs, write_wurcs_canonical};
+pub use grammar::{
+    normalize_wurcs, parse_wurcs, standardize_wurcs, write_wurcs, write_wurcs_canonical,
+};
 pub use model::{
     AnomericSymbol, CarbonPosition, Linkage, Modification, Monosaccharide, Probability,
     ProbabilityValue, RepeatCount, ResidueGraph, RingClosure, Stereo, UndefinedLinkage,

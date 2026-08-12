@@ -1,6 +1,6 @@
 # Development status
 
-Version 0.3.0 is the first synchronized Rust and Python release candidate.
+Version 0.3.1 is the current synchronized Rust and Python release.
 
 ## Release-gated capabilities
 
@@ -23,7 +23,7 @@ Version 0.3.0 is the first synchronized Rust and Python release candidate.
 - PDB/mmCIF output and conformer generation are not implemented.
 - Generic and display-only SNFG entries parse/render but cannot always produce
   molecular or GLYCAM output.
-- PyPy and free-threaded CPython are not release targets for 0.3.0.
+- PyPy and free-threaded CPython are not release targets for 0.3.1.
 
 ## Verification
 

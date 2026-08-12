@@ -29,13 +29,13 @@ This crate provides molecular structure handling capabilities with both pure-Rus
 ### Pure-Rust (Default)
 ```toml
 [dependencies]
-crabwurcs-mol = "0.3.0"
+crabwurcs-mol = "0.3.1"
 ```
 
 ### RDKit Backend
 ```toml
 [dependencies]
-crabwurcs-mol = { version = "0.3.0", features = ["rdkit-backend"] }
+crabwurcs-mol = { version = "0.3.1", features = ["rdkit-backend"] }
 ```
 
 See [README-BACKEND.md](README-BACKEND.md) for RDKit build requirements.

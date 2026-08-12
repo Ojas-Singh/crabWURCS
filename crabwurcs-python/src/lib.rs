@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 create_exception!(_native, CrabWurcsError, PyException);
 create_exception!(_native, ParseError, CrabWurcsError);
 create_exception!(_native, ConversionError, CrabWurcsError);
+create_exception!(_native, NormalizationError, ConversionError);
 create_exception!(_native, NonConcreteError, ConversionError);
 create_exception!(_native, PdbError, CrabWurcsError);
 create_exception!(_native, RenderError, CrabWurcsError);
@@ -225,6 +226,12 @@ fn detect_format(value: &str) -> &'static str {
     }
 }
 
+#[pyfunction]
+fn normalize_wurcs(value: &str) -> PyResult<String> {
+    crabwurcs::normalize_wurcs(value)
+        .map_err(|error| NormalizationError::new_err(error.to_string()))
+}
+
 #[pymodule]
 #[pyo3(name = "_native")]
 fn crabwurcs_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -234,9 +241,14 @@ fn crabwurcs_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(extract_pdb, module)?)?;
     module.add_function(wrap_pyfunction!(extract_pdb_file, module)?)?;
     module.add_function(wrap_pyfunction!(detect_format, module)?)?;
+    module.add_function(wrap_pyfunction!(normalize_wurcs, module)?)?;
     module.add("CrabWurcsError", module.py().get_type::<CrabWurcsError>())?;
     module.add("ParseError", module.py().get_type::<ParseError>())?;
     module.add("ConversionError", module.py().get_type::<ConversionError>())?;
+    module.add(
+        "NormalizationError",
+        module.py().get_type::<NormalizationError>(),
+    )?;
     module.add(
         "NonConcreteError",
         module.py().get_type::<NonConcreteError>(),

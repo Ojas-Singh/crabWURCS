@@ -1,7 +1,7 @@
 use petgraph::graph::{Graph, NodeIndex};
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CarbonPosition(pub u8);
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -405,6 +405,7 @@ pub struct ResidueGraph {
     // Preserve a parsed WURCS record verbatim while the graph is unchanged,
     // including uncommon constructs not yet covered by the editable model.
     source_wurcs: Option<String>,
+    normalization_issue: Option<String>,
     source_iupac: Option<String>,
     source_iupac_extended: Option<String>,
     source_glycam: Option<String>,
@@ -419,6 +420,7 @@ impl ResidueGraph {
             graph: Graph::new(),
             root: None,
             source_wurcs: None,
+            normalization_issue: None,
             source_iupac: None,
             source_iupac_extended: None,
             source_glycam: None,
@@ -510,6 +512,14 @@ impl ResidueGraph {
 
     pub fn source_wurcs(&self) -> Option<&str> {
         self.source_wurcs.as_deref()
+    }
+
+    pub(crate) fn set_normalization_issue(&mut self, issue: String) {
+        self.normalization_issue = Some(issue);
+    }
+
+    pub fn normalization_issue(&self) -> Option<&str> {
+        self.normalization_issue.as_deref()
     }
 
     pub fn set_source_iupac(&mut self, source: String) {

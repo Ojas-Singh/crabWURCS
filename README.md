@@ -24,8 +24,8 @@ pip install crabwurcs
 Rust library or CLI:
 
 ```bash
-cargo add crabwurcs@0.3.0
-cargo install crabwurcs-cli@0.3.0
+cargo add crabwurcs@0.3.1
+cargo install crabwurcs-cli@0.3.1
 ```
 
 Prebuilt Python wheels use the stable CPython ABI and do not require RDKit or
@@ -34,11 +34,13 @@ a local Rust compiler on supported Linux, macOS, and Windows systems.
 ## Python quick start
 
 ```python
+from IPython.display import SVG, display
 import crabwurcs
 
 glycan = crabwurcs.Glycan.parse("Gal(b1-4)GlcNAc")
 print(glycan.to(crabwurcs.Format.WURCS))
 print(glycan.to(crabwurcs.Format.SMILES))
+display(SVG(glycan.render("svg")))
 
 svg = glycan.render(
     "svg",
@@ -59,6 +61,7 @@ wurcs = crabwurcs.convert(
     to_format="wurcs",
     from_format="iupac-condensed",
 )
+normalized = crabwurcs.normalize_wurcs(wurcs)
 png = crabwurcs.render_snfg(wurcs, from_format="wurcs", image_format="png")
 ```
 
@@ -84,12 +87,18 @@ Both `pip install crabwurcs` and `cargo install crabwurcs-cli` install the
 
 ```bash
 crabwurcs convert --to wurcs 'Gal(b1-4)GlcNAc'
+crabwurcs normalize-wurcs 'WURCS=2.0/...'
 crabwurcs wurcs-to-mol --format smiles glycan.wurcs
 crabwurcs pdb-to-wurcs --to iupac-condensed structure.cif
 crabwurcs render --output glycan.png 'Gal(b1-4)GlcNAc'
 ```
 
 ## Coverage and chemical guarantees
+
+WURCS-producing operations return the local normalized representation. The
+strict Rust, Python, and CLI normalizers reject syntax that cannot be proven
+lossless; ordinary serialization retains an unchanged parsed source for those
+rare constructs instead of dropping information. No network service is used.
 
 - All 87 SNFG 2.0.4 registry entries parse and render.
 - All 74 chemically concrete entries are tested through WURCS, IUPAC,
@@ -100,7 +109,7 @@ crabwurcs render --output glycan.png 'Gal(b1-4)GlcNAc'
   repeats do not silently collapse to one molecule.
 - PDB/mmCIF extraction retains chain, sequence number, insertion code, and
   graph-node provenance. Coordinate generation and PDB writing are out of
-  scope for 0.3.0.
+  scope for 0.3.1.
 
 See the [complete residue table](https://github.com/Ojas-Singh/crabWURCS/blob/main/crabwurcs/docs/supported-monosaccharides.md)
 and [format limitations](https://ojas-singh.github.io/crabWURCS/formats/) for details.

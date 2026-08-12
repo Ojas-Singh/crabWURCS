@@ -8,6 +8,9 @@ pub enum CoreError {
     #[error("WURCS string standardization failed: {0}")]
     StandardizationError(String),
 
+    #[error("WURCS normalization is unsupported: {0}")]
+    UnsupportedNormalization(String),
+
     #[error("residue graph is malformed: {0} (e.g. dangling linkage, unreachable node from root)")]
     MalformedGraph(String),
 

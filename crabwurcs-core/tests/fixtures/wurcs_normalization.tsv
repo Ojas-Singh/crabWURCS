@@ -1,0 +1,8 @@
+# Offline WURCS normalization oracle.
+# Reference: GlycanFormatConverter 2.10.4 / WURCSFramework normalization behavior.
+# The first row is the public GlyCosmos wurcs2wurcs example; later rows are
+# equivalent reorderings and normalization cases derived from that behavior.
+WURCS=2.0/4,5,4/[a2122h-1x_1-5_2*NCC/3=O][a2122h-1b_1-5_2*NCC/3=O][a1122h-1b_1-5][a1122h-1a_1-5]/1-2-3-4-4/a4-b1_b4-c1_c3-d1_c6-e1	WURCS=2.0/4,5,4/[a2122h-1x_1-5_2*NCC/3=O][a2122h-1b_1-5_2*NCC/3=O][a1122h-1b_1-5][a1122h-1a_1-5]/1-2-3-4-4/a4-b1_b4-c1_c3-d1_c6-e1
+WURCS=2.0/2,2,1/[a2112h-1b_1-5][u2122h]/1-2/b3-a1	WURCS=2.0/2,2,1/[u2122h][a2112h-1b_1-5]/1-2/a3-b1
+WURCS=2.0/2,1,0/[u2122h][u2112h]/1/	WURCS=2.0/1,1,0/[u2122h]/1/
+WURCS=2.0/1,1,0/[a2122h_2-1a_1-5*NCC/3=O]/1/	WURCS=2.0/1,1,0/[a2122h-1a_1-5_2*NCC/3=O]/1/

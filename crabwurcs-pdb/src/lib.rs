@@ -439,7 +439,9 @@ fn extract_glycans_from_pdb_with_provenance(
 
     let mut sugar_keys = residues
         .iter()
-        .filter_map(|(key, residue)| is_sugar_residue(&residue.name, residue.hetero).then_some(*key))
+        .filter_map(|(key, residue)| {
+            is_sugar_residue(&residue.name, residue.hetero).then_some(*key)
+        })
         .collect::<HashSet<_>>();
     let mut inferred_residues = HashMap::<usize, Monosaccharide>::new();
 

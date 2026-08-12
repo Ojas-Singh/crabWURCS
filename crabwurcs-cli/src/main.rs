@@ -106,6 +106,15 @@ enum Command {
         input_file: bool,
     },
 
+    /// Normalize a WURCS 2.0 string using the local canonicalizer.
+    NormalizeWurcs {
+        /// Input string, or a file path if `--input-file` is set. Reads
+        /// stdin if omitted.
+        input: Option<String>,
+        #[arg(long)]
+        input_file: bool,
+    },
+
     /// Extract WURCS from a chemical structure (MOL/SDF/SMILES).
     /// Equivalent to `MolWURCS --wurcs-from-molecules`.
     MolToWurcs {
@@ -162,6 +171,7 @@ fn main() -> ExitCode {
             input,
             input_file,
         } => run_convert(from, to, input, input_file),
+        Command::NormalizeWurcs { input, input_file } => run_normalize_wurcs(input, input_file),
         Command::MolToWurcs { format, input } => run_mol_to_wurcs(format, input),
         Command::WurcsToMol { format, input } => run_wurcs_to_mol(format, input),
         Command::PdbToWurcs { input, to } => run_pdb_convert(input, to),
@@ -218,6 +228,12 @@ fn run_convert(
     let output = crabwurcs::convert(&text, from.into(), to.into())?;
 
     println!("{output}");
+    Ok(())
+}
+
+fn run_normalize_wurcs(input: Option<String>, input_file: bool) -> anyhow::Result<()> {
+    let text = read_text_input(input, input_file)?;
+    println!("{}", crabwurcs::normalize_wurcs(&text)?);
     Ok(())
 }
 
@@ -437,6 +453,32 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn normalize_wurcs_command_accepts_literal_or_file_input() {
+        let literal = Cli::try_parse_from([
+            "crabwurcs",
+            "normalize-wurcs",
+            "WURCS=2.0/1,1,0/[u2122h]/1/",
+        ])
+        .unwrap();
+        assert!(matches!(literal.command, Command::NormalizeWurcs { .. }));
+
+        let file = Cli::try_parse_from([
+            "crabwurcs",
+            "normalize-wurcs",
+            "--input-file",
+            "glycan.wurcs",
+        ])
+        .unwrap();
+        assert!(matches!(
+            file.command,
+            Command::NormalizeWurcs {
+                input_file: true,
+                ..
+            }
+        ));
     }
 
     #[test]

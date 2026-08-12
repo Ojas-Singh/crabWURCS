@@ -31,6 +31,9 @@ cargo install crabwurcs-cli
 # Convert to WURCS (auto-detects input format)
 crabwurcs convert --to wurcs 'Gal(b1-4)GlcNAc'
 
+# Normalize existing WURCS (also accepts stdin or --input-file)
+crabwurcs normalize-wurcs 'WURCS=2.0/...'
+
 # Convert to GLYCAM
 crabwurcs convert --to glycam 'β-D-Galp-(1→4)-D-GlcNAc'
 

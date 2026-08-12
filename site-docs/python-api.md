@@ -15,10 +15,15 @@
 ```python
 crabwurcs.detect_format(value)
 crabwurcs.convert(value, to_format, from_format="auto")
+crabwurcs.normalize_wurcs(value)
 crabwurcs.render_snfg(value, from_format="auto", image_format="svg")
 crabwurcs.extract_pdb(contents, format="auto")
 crabwurcs.extract_pdb_file(path)
 ```
+
+WURCS output is normalized by default. `normalize_wurcs` is strict and raises
+`NormalizationError` when the input contains syntax that cannot be normalized
+losslessly by the local model.
 
 ## PDB results
 

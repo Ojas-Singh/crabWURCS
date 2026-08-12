@@ -22,3 +22,6 @@ thiserror = { workspace = true }
 default = []
 # Forwarded down to crabwurcs-mol; see that crate's README-BACKEND.md.
 rdkit-backend = ["crabwurcs-mol/rdkit-backend"]
+
+[dev-dependencies]
+serde_json = "1"

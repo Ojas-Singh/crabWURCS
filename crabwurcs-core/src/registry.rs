@@ -96,8 +96,8 @@ residue_kinds! {
     (Man, "Man", Some("a1122h-1x_1-5"), false, ["Mannose"]),
     (Gal, "Gal", Some("a2112h-1x_1-5"), false, ["Galactose"]),
     (Gul, "Gul", Some("a2212h-1x_1-5"), false, ["Gulose"]),
-    (Alt, "Alt", Some("a1222h-1x_1-5"), false, ["Altrose"]),
-    (All, "All", Some("a1111h-1x_1-5"), false, ["Allose"]),
+    (Alt, "Alt", Some("a2111h-1x_1-5"), false, ["Altrose"]),
+    (All, "All", Some("a2222h-1x_1-5"), false, ["Allose"]),
     (Tal, "Tal", Some("a1112h-1x_1-5"), false, ["Talose"]),
     (Ido, "Ido", Some("a2121h-1x_1-5"), false, ["Idose"]),
 
@@ -106,8 +106,8 @@ residue_kinds! {
     (ManNAc, "ManNAc", Some("a1122h-1x_1-5_2*NCC/3=O"), false, ["N-Acetylmannosamine"]),
     (GalNAc, "GalNAc", Some("a2112h-1x_1-5_2*NCC/3=O"), false, ["N-Acetylgalactosamine"]),
     (GulNAc, "GulNAc", Some("a2212h-1x_1-5_2*NCC/3=O"), false, ["N-Acetylgulosamine"]),
-    (AltNAc, "AltNAc", Some("a1222h-1x_1-5_2*NCC/3=O"), false, ["N-Acetylaltrosamine"]),
-    (AllNAc, "AllNAc", Some("a1111h-1x_1-5_2*NCC/3=O"), false, ["N-Acetylallosamine"]),
+    (AltNAc, "AltNAc", Some("a2111h-1x_1-5_2*NCC/3=O"), false, ["N-Acetylaltrosamine"]),
+    (AllNAc, "AllNAc", Some("a2222h-1x_1-5_2*NCC/3=O"), false, ["N-Acetylallosamine"]),
     (TalNAc, "TalNAc", Some("a1112h-1x_1-5_2*NCC/3=O"), false, ["N-Acetyltalosamine"]),
     (IdoNAc, "IdoNAc", Some("a2121h-1x_1-5_2*NCC/3=O"), false, ["N-Acetylidosamine"]),
 
@@ -116,8 +116,8 @@ residue_kinds! {
     (ManN, "ManN", Some("a1122h-1x_1-5_2*N"), false, ["Mannosamine"]),
     (GalN, "GalN", Some("a2112h-1x_1-5_2*N"), false, ["Galactosamine"]),
     (GulN, "GulN", Some("a2212h-1x_1-5_2*N"), false, ["Gulosamine"]),
-    (AltN, "AltN", Some("a1222h-1x_1-5_2*N"), false, ["Altrosamine"]),
-    (AllN, "AllN", Some("a1111h-1x_1-5_2*N"), false, ["Allosamine"]),
+    (AltN, "AltN", Some("a2111h-1x_1-5_2*N"), false, ["Altrosamine"]),
+    (AllN, "AllN", Some("a2222h-1x_1-5_2*N"), false, ["Allosamine"]),
     (TalN, "TalN", Some("a1112h-1x_1-5_2*N"), false, ["Talosamine"]),
     (IdoN, "IdoN", Some("a2121h-1x_1-5_2*N"), false, ["Idosamine"]),
 
@@ -126,8 +126,8 @@ residue_kinds! {
     (ManA, "ManA", Some("a1122A-1x_1-5"), false, ["MannuronicAcid"]),
     (GalA, "GalA", Some("a2112A-1x_1-5"), false, ["GalacturonicAcid"]),
     (GulA, "GulA", Some("a2212A-1x_1-5"), false, ["GuluronicAcid"]),
-    (AltA, "AltA", Some("a1222A-1x_1-5"), false, ["AltruronicAcid"]),
-    (AllA, "AllA", Some("a1111A-1x_1-5"), false, ["AlluronicAcid"]),
+    (AltA, "AltA", Some("a2111A-1x_1-5"), false, ["AltruronicAcid"]),
+    (AllA, "AllA", Some("a2222A-1x_1-5"), false, ["AlluronicAcid"]),
     (TalA, "TalA", Some("a1112A-1x_1-5"), false, ["TaluronicAcid"]),
     (IdoA, "IdoA", Some("a2121A-1x_1-5"), false, ["IduronicAcid"]),
 

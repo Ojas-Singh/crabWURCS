@@ -3,6 +3,8 @@ from crabwurcs.cli import main
 
 
 IUPAC = "Gal(b1-4)GlcNAc"
+CANONICAL_WURCS = "WURCS=2.0/2,2,1/[u2122h][a2112h-1b_1-5]/1-2/a3-b1"
+REORDERED_WURCS = "WURCS=2.0/2,2,1/[a2112h-1b_1-5][u2122h]/1-2/b3-a1"
 
 
 def test_conversion_and_opaque_glycan_api():
@@ -11,6 +13,24 @@ def test_conversion_and_opaque_glycan_api():
     assert wurcs.startswith("WURCS=2.0/")
     assert crabwurcs.convert(wurcs, "iupac-condensed", "wurcs") == IUPAC
     assert "@" in glycan.to("smiles")
+
+
+def test_wurcs_is_normalized_by_default_and_explicitly():
+    assert crabwurcs.normalize_wurcs(REORDERED_WURCS) == CANONICAL_WURCS
+    assert crabwurcs.convert(REORDERED_WURCS, "wurcs", "wurcs") == CANONICAL_WURCS
+    assert crabwurcs.Glycan.parse(REORDERED_WURCS, "wurcs").to("wurcs") == CANONICAL_WURCS
+
+
+def test_explicit_normalization_has_a_typed_unsupported_error():
+    unsupported = "WURCS=2.0/1,1,0/[a2122h-1a_1-5_2|3*OC]/1/"
+    try:
+        crabwurcs.normalize_wurcs(unsupported)
+    except crabwurcs.NormalizationError as error:
+        assert isinstance(error, crabwurcs.ConversionError)
+    else:
+        raise AssertionError("expected NormalizationError")
+
+    assert crabwurcs.Glycan.parse(unsupported, "wurcs").to("wurcs") == unsupported
 
 
 def test_svg_png_and_motif_rendering():
@@ -63,5 +83,10 @@ def test_python_cli_conversion(capsys):
     assert capsys.readouterr().out.startswith("WURCS=2.0/")
 
 
+def test_python_cli_normalization(capsys):
+    assert main(["normalize-wurcs", REORDERED_WURCS]) == 0
+    assert capsys.readouterr().out.strip() == CANONICAL_WURCS
+
+
 def test_version_is_synchronized():
-    assert crabwurcs.__version__ == "0.3.0"
+    assert crabwurcs.__version__ == "0.3.1"

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+## 0.3.1 - 2026-08-12
+
+- Normalize WURCS output deterministically across Rust, Python, and CLI APIs.
+- Add strict `normalize_wurcs` library functions and `normalize-wurcs` CLI command.
+- Preserve unsupported parsed WURCS during ordinary serialization while explicit normalization returns a typed error.
+- Add an offline GlycoShape conformance audit for all 1,780 populated IUPAC
+  condensed/extended notations and an opt-in live GlyCosmos API comparison.
+
 All notable changes to crabWURCS are recorded here.
 
 ## 0.3.0 - 2026-08-07

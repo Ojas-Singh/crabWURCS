@@ -341,19 +341,20 @@ dependencies = [
 
 [[package]]
 name = "crabwurcs"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "crabwurcs-core",
  "crabwurcs-iupac",
  "crabwurcs-mol",
  "crabwurcs-pdb",
  "crabwurcs-snfg",
+ "serde_json",
  "thiserror 2.0.19",
 ]
 
 [[package]]
 name = "crabwurcs-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -363,7 +364,7 @@ dependencies = [
 
 [[package]]
 name = "crabwurcs-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "hashbrown",
  "indexmap",
@@ -376,7 +377,7 @@ dependencies = [
 
 [[package]]
 name = "crabwurcs-iupac"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "crabwurcs-core",
  "nom",
@@ -387,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "crabwurcs-mol"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chematic",
  "crabwurcs-core",
@@ -398,7 +399,7 @@ dependencies = [
 
 [[package]]
 name = "crabwurcs-pdb"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "crabwurcs-core",
  "crabwurcs-mol",
@@ -412,7 +413,7 @@ dependencies = [
 
 [[package]]
 name = "crabwurcs-python"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "crabwurcs",
  "pyo3",
@@ -420,7 +421,7 @@ dependencies = [
 
 [[package]]
 name = "crabwurcs-snfg"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "crabwurcs-core",
  "crabwurcs-iupac",

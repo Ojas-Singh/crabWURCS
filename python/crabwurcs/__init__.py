@@ -19,6 +19,7 @@ __version__ = _native.__version__
 CrabWurcsError = _native.CrabWurcsError
 ParseError = _native.ParseError
 ConversionError = _native.ConversionError
+NormalizationError = _native.NormalizationError
 NonConcreteError = _native.NonConcreteError
 PdbError = _native.PdbError
 RenderError = _native.RenderError
@@ -130,6 +131,12 @@ def convert(
     return Glycan.parse(value, from_format).to(to_format)
 
 
+def normalize_wurcs(value: str) -> str:
+    """Return the normalized WURCS 2.0 representation of a WURCS string."""
+
+    return _native.normalize_wurcs(value)
+
+
 def render_snfg(
     value: str,
     *,
@@ -191,11 +198,13 @@ __all__ = [
     "CrabWurcsError",
     "ParseError",
     "ConversionError",
+    "NormalizationError",
     "NonConcreteError",
     "PdbError",
     "RenderError",
     "detect_format",
     "convert",
+    "normalize_wurcs",
     "render_snfg",
     "extract_pdb",
     "extract_pdb_file",

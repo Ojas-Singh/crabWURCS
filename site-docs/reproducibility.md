@@ -13,3 +13,31 @@ converting user input.
 Release validation runs formatting, warning-free Clippy, all targets and
 doctests, Python wheel tests, version consistency checks, and Cargo package
 construction from a clean checkout.
+
+## WURCS normalization conformance
+
+The bundled GlycoShape IUPAC table is an offline regression oracle. It parses
+all populated condensed and extended fields (1,780 notations across 942
+bundled rows), normalizes each source WURCS, and compares the result with a
+WURCS written from the IUPAC graph. Any parse/write failure is treated as a
+test failure:
+
+```bash
+cargo test -p crabwurcs --test glycoshape_iupac_conformance -- --nocapture
+```
+
+GlyCosmos verification is opt-in so normal builds remain deterministic and
+offline. The ignored test posts the bundled source WURCS strings to the
+documented [GlycanFormatConverter API](https://doc.glycosmos.org/api/glycanformatconverter)
+and requires its response to equal crabWURCS's normalized WURCS:
+
+```bash
+CRABWURCS_RUN_GLYCOSMOS=1 \
+  cargo test -p crabwurcs --test glycosmos_conformance -- --ignored --nocapture
+```
+
+The live check defaults to 25 distinct WURCS records. Set
+`CRABWURCS_GLYCOSMOS_LIMIT=0` (or `all`) to exercise the complete bundled
+corpus, or set `CRABWURCS_GLYCOSMOS_API` to use a compatible versioned endpoint.
+The default endpoint is the documented 2.8.2 JSON route:
+`https://api.glycosmos.org/glycanformatconverter/2.8.2/wurcs2wurcs`.

@@ -1422,7 +1422,18 @@ fn make_residue_from_name_with_anomeric(
             residue
         };
         apply_explicit_configuration(&mut residue, kind, is_d, is_l);
-        apply_ring_suffix(&mut residue, &base[..matched_len]);
+        // `registry_kind_prefix` deliberately returns the dictionary name
+        // length so aliases and modification suffixes can be handled below.
+        // A trailing `p`/`f` is nevertheless part of the IUPAC residue name
+        // (for example `Araf`, `Galf`, and `Fruf`) and must select the WURCS
+        // ring closure rather than being treated as an unknown modification.
+        let ring_suffix_len = base[matched_len..]
+            .chars()
+            .next()
+            .filter(|character| matches!(character, 'p' | 'f'))
+            .map(char::len_utf8)
+            .unwrap_or(0);
+        apply_ring_suffix(&mut residue, &base[..matched_len + ring_suffix_len]);
         if let Some(symbol) = anomeric_override {
             residue.anomeric_symbol = symbol;
             if residue.anomeric_prefix.starts_with('h') {
@@ -1433,8 +1444,10 @@ fn make_residue_from_name_with_anomeric(
                 residue.anomeric_prefix = "a".into();
             }
         }
-        let suffix = &base[matched_len..];
-        merge_extra_modifications(&mut residue, suffix);
+        // Parse the complete IUPAC name so context-sensitive substitutions
+        // (notably Bac[2Ac,4Ac]) retain their N-acetyl rather than being
+        // mistaken for ordinary O-acetyl groups.
+        merge_extra_modifications(&mut residue, &base);
         return residue;
     }
 
@@ -1624,13 +1637,21 @@ fn apply_ring_suffix(residue: &mut Monosaccharide, matched_name: &str) {
     }
 }
 
-fn merge_extra_modifications(residue: &mut Monosaccharide, suffix: &str) {
-    if suffix.is_empty() {
+fn merge_extra_modifications(residue: &mut Monosaccharide, name: &str) {
+    if name.is_empty() {
         return;
     }
-    let extra = extract_name_modifications(&format!("X{suffix}"));
+    let extra = extract_name_modifications(name);
     for modification in extra {
-        if !residue.modifications.iter().any(|existing| {
+        if let Some(existing) = residue.modifications.iter_mut().find(|existing| {
+            existing.position == modification.position
+                && existing.descriptor == "N"
+                && modification.descriptor.starts_with("NCC")
+        }) {
+            // Bacillosamine's UniqueRES uses bare N at positions 2/4.  An
+            // explicit Ac suffix changes that amino substituent to N-acetyl.
+            *existing = modification;
+        } else if !residue.modifications.iter().any(|existing| {
             existing.position == modification.position
                 && existing.descriptor == modification.descriptor
         }) {
@@ -1801,15 +1822,30 @@ fn extract_name_modifications(name: &str) -> Vec<Modification> {
         }
     }
 
-    let methyl_re = regex::Regex::new(r"([0-9]+)(?:\(([^)]+)\))?Me").expect("methyl regex");
-    for captures in methyl_re.captures_iter(name) {
-        if let Ok(position) = captures[1].parse::<u8>() {
+    // IUPAC sources use both grouped (`2,3Me2`) and sequential
+    // (`2Me3Me`) methyl notation. Expand every listed carbon; matching only
+    // the final number would silently lose earlier methyl groups. Keep the
+    // grouped expression separate so the trailing count in `Me2` cannot be
+    // mistaken for the next position in a sequential expression.
+    let grouped_methyl_re = regex::Regex::new(r"([0-9]+(?:,[0-9]+)+)(?:\(([^)]+)\))?Me[0-9]*")
+        .expect("grouped methyl regex");
+    let sequential_methyl_re =
+        regex::Regex::new(r"([0-9]+)(?:\(([^)]+)\))?Me").expect("methyl regex");
+    for captures in grouped_methyl_re
+        .captures_iter(name)
+        .chain(sequential_methyl_re.captures_iter(name))
+    {
+        let probability = captures
+            .get(2)
+            .and_then(|value| parse_substituent_probability(value.as_str()));
+        for position in captures[1]
+            .split(',')
+            .filter_map(|value| value.parse::<u8>().ok())
+        {
             mods.push(Modification {
                 position: CarbonPosition(position),
                 descriptor: "OC".into(),
-                probability: captures
-                    .get(2)
-                    .and_then(|value| parse_substituent_probability(value.as_str())),
+                probability,
             });
         }
     }
@@ -2598,12 +2634,13 @@ fn normalize_extended_residue(name: &str) -> String {
         result = result.replace(from, to);
     }
 
-    // GlycoShape's extended notation writes sulfated hexosamines as, for
-    // example, GlcN2,6S2 or GlcN2,3,6S3. Position 2 is the N-sulfate; the
-    // remaining positions are O-sulfates. Convert that compact count notation
-    // to the condensed suffix understood by the residue parser.
+    // GlycoShape's extended notation writes sulfates as, for example,
+    // `GlcN2S`, `GlcN2,6S2`, `GlcN2,3,6S3`, or `Gal3,6S2`. Position 2 is an
+    // N-sulfate for an amino sugar; all other positions are O-sulfates.
+    // Expand the grouped count notation into the condensed suffix consumed
+    // by `extract_name_modifications`.
     let n_sulfate_re =
-        regex::Regex::new(r"^(?P<base>[A-Za-z]+)N(?P<positions>[0-9]+(?:,[0-9]+)*)S[0-9]+$")
+        regex::Regex::new(r"^(?P<base>[A-Za-z]+)N(?P<positions>[0-9]+(?:,[0-9]+)*)S[0-9]*$")
             .expect("extended N-sulfate regex");
     if let Some(captures) = n_sulfate_re.captures(&result) {
         let positions = captures["positions"]
@@ -2618,6 +2655,18 @@ fn normalize_extended_residue(name: &str) -> String {
                 .collect::<String>();
             return format!("{}NS{o_sulfates}", &captures["base"]);
         }
+    }
+
+    let o_sulfate_re =
+        regex::Regex::new(r"^(?P<base>[A-Za-z]+)(?P<positions>[0-9]+(?:,[0-9]+)*)S[0-9]*$")
+            .expect("extended O-sulfate regex");
+    if let Some(captures) = o_sulfate_re.captures(&result) {
+        let suffix = captures["positions"]
+            .split(',')
+            .filter(|position| !position.is_empty())
+            .map(|position| format!("{position}S"))
+            .collect::<String>();
+        return format!("{}{suffix}", &captures["base"]);
     }
     result
 }
@@ -3426,7 +3475,10 @@ mod tests {
         assert!(graph.is_composition());
         let wurcs = crabwurcs_core::write_wurcs(&graph).unwrap();
         let reparsed = crabwurcs_core::parse_wurcs(&wurcs).unwrap();
-        assert_eq!(write_iupac_condensed(&reparsed).unwrap(), composition);
+        assert_eq!(
+            write_iupac_condensed(&reparsed).unwrap(),
+            "{HexNAc}2,{Hex}3,{dHex}1"
+        );
     }
 
     #[test]
