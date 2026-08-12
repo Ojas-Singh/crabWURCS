@@ -49,9 +49,13 @@ pub struct ExtractedGlycanWithProvenance {
 
 const PDB_COMPONENTS: &str = include_str!("../data/pdb_carbohydrate_components.tsv");
 
-fn is_sugar_residue(name: &str) -> bool {
+fn is_sugar_residue(name: &str, hetero: bool) -> bool {
     pdb_component_residue(name).is_some()
-        || glycam_residue_kind(name).is_some()
+        // The GLYCAM code lookup is a loose heuristic (any 3-letter name can
+        // look like a code), so it is only applied to HETATM records. Amino
+        // acid names such as VAL collide with GLYCAM codes and must never be
+        // treated as glycans.
+        || (hetero && glycam_residue_kind(name).is_some())
         || registry_named_residue(name).is_some()
 }
 
@@ -379,6 +383,7 @@ fn extract_glycans_from_pdb_with_provenance(
         insertion_code: Option<String>,
         chain: String,
         order: usize,
+        hetero: bool,
     }
 
     #[derive(Debug, Clone)]
@@ -409,6 +414,7 @@ fn extract_glycans_from_pdb_with_provenance(
                 insertion_code: insertion_code.map(str::to_string),
                 chain: hierarchy.chain().id().to_string(),
                 order: next_order,
+                hetero: hierarchy.atom().hetero(),
             }
         });
         atoms.insert(
@@ -433,7 +439,7 @@ fn extract_glycans_from_pdb_with_provenance(
 
     let mut sugar_keys = residues
         .iter()
-        .filter_map(|(key, residue)| is_sugar_residue(&residue.name).then_some(*key))
+        .filter_map(|(key, residue)| is_sugar_residue(&residue.name, residue.hetero).then_some(*key))
         .collect::<HashSet<_>>();
     let mut inferred_residues = HashMap::<usize, Monosaccharide>::new();
 
@@ -881,11 +887,14 @@ mod tests {
 
     #[test]
     fn test_sugar_residue_detection() {
-        assert!(is_sugar_residue("NAG"));
-        assert!(is_sugar_residue("MAN"));
-        assert!(is_sugar_residue("FUC"));
-        assert!(!is_sugar_residue("HOH"));
-        assert!(!is_sugar_residue("ALA"));
+        assert!(is_sugar_residue("NAG", true));
+        assert!(is_sugar_residue("MAN", true));
+        assert!(is_sugar_residue("FUC", true));
+        assert!(!is_sugar_residue("HOH", true));
+        assert!(!is_sugar_residue("ALA", false));
+        // Amino acid names must not be classified as glycans even when they
+        // look like a GLYCAM code (VAL would map to V + A = Ara + L).
+        assert!(!is_sugar_residue("VAL", false));
     }
 
     #[test]
@@ -934,7 +943,7 @@ mod tests {
         assert_eq!(residue_to_monosaccharide("3hA").skeleton_code, "2211m");
         assert_eq!(residue_to_monosaccharide("3HA").skeleton_code, "1122m");
         assert_eq!(residue_to_monosaccharide("FUC").skeleton_code, "1221m");
-        assert!(!is_sugar_residue("RHM"));
+        assert!(!is_sugar_residue("RHM", true));
         assert_eq!(residue_to_monosaccharide("XYS").skeleton_code, "212h");
         assert_eq!(
             residue_to_monosaccharide("XYS").anomeric_symbol,
@@ -970,7 +979,7 @@ mod tests {
         assert_eq!(concrete.len(), 74);
         for kind in concrete {
             let name = kind.canonical_name();
-            assert!(is_sugar_residue(name), "{name}");
+            assert!(is_sugar_residue(name, true), "{name}");
             assert_eq!(
                 residue_to_monosaccharide(name).residue_kind,
                 Some(kind),
