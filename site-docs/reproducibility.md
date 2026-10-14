@@ -17,8 +17,9 @@ construction from a clean checkout.
 ## WURCS normalization conformance
 
 The bundled GlycoShape IUPAC table is an offline regression oracle. It parses
-all populated condensed and extended fields (1,780 notations across 942
-bundled rows), normalizes each source WURCS, and compares the result with a
+all populated condensed and extended fields (1,778 notations across 942
+bundled rows; a GlyTouCan accession and a damaged string stored in the IUPAC
+column are not notations and are excluded), normalizes each source WURCS, and compares the result with a
 WURCS written from the IUPAC graph. Any parse/write failure is treated as a
 test failure:
 

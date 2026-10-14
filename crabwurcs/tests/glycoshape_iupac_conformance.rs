@@ -30,6 +30,14 @@ fn records() -> impl Iterator<Item = Record<'static>> {
         })
 }
 
+/// Strings stored in the IUPAC column that are not IUPAC notations: a
+/// GlyTouCan accession (GlycoShape GS00728) and a damaged string (GS00430).
+/// Only the table fallback resolves them.
+const NOT_IUPAC: &[&str] = &[
+    "G60371D-N",
+    "Galb1-4)Gala1-3(?24-diacetimido-246-trideoxyhexose)",
+];
+
 #[test]
 fn glycoshape_iupac_notations_match_normalized_wurcs() {
     let mut checked = 0usize;
@@ -37,7 +45,7 @@ fn glycoshape_iupac_notations_match_normalized_wurcs() {
     let mut mismatches = Vec::new();
 
     for record in records() {
-        if record.wurcs.is_empty() {
+        if record.wurcs.is_empty() || NOT_IUPAC.contains(&record.condensed) {
             continue;
         }
 

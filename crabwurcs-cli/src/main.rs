@@ -50,6 +50,28 @@ impl From<TextFormat> for crabwurcs::Format {
     }
 }
 
+/// Use of the bundled table of GlycoShape notations by `convert`.
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+enum TableArg {
+    /// Compute every conversion; never consult the table.
+    #[default]
+    Off,
+    /// Answer from the table only when the input cannot be converted.
+    Fallback,
+    /// Compute, and fail when the input's table record holds another structure.
+    Check,
+}
+
+impl From<TableArg> for crabwurcs::TableMode {
+    fn from(value: TableArg) -> Self {
+        match value {
+            TableArg::Off => Self::Off,
+            TableArg::Fallback => Self::Fallback,
+            TableArg::Check => Self::Check,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum MotifTextFormat {
     Auto,
@@ -104,6 +126,12 @@ enum Command {
         input: Option<String>,
         #[arg(long)]
         input_file: bool,
+        /// Use of the bundled table of GlycoShape notations. Conversions
+        /// are computed; `fallback` answers inputs that cannot be converted
+        /// from the table, `check` fails when the input's table record holds
+        /// another structure.
+        #[arg(long, value_enum, default_value = "off")]
+        table: TableArg,
     },
 
     /// Normalize a WURCS 2.0 string using the local canonicalizer.
@@ -170,7 +198,8 @@ fn main() -> ExitCode {
             to,
             input,
             input_file,
-        } => run_convert(from, to, input, input_file),
+            table,
+        } => run_convert(from, to, input, input_file, table),
         Command::NormalizeWurcs { input, input_file } => run_normalize_wurcs(input, input_file),
         Command::MolToWurcs { format, input } => run_mol_to_wurcs(format, input),
         Command::WurcsToMol { format, input } => run_wurcs_to_mol(format, input),
@@ -222,10 +251,11 @@ fn run_convert(
     to: TextFormat,
     input: Option<String>,
     input_file: bool,
+    table: TableArg,
 ) -> anyhow::Result<()> {
     let text = read_text_input(input, input_file)?;
 
-    let output = crabwurcs::convert(&text, from.into(), to.into())?;
+    let output = crabwurcs::convert_with_table(&text, from.into(), to.into(), table.into())?;
 
     println!("{output}");
     Ok(())
@@ -479,6 +509,55 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn convert_computes_unless_the_table_is_requested() {
+        let default =
+            Cli::try_parse_from(["crabwurcs", "convert", "--to", "wurcs", "Glc"]).unwrap();
+        assert!(matches!(
+            default.command,
+            Command::Convert {
+                table: TableArg::Off,
+                ..
+            }
+        ));
+        for (value, expected) in [("fallback", "Fallback"), ("check", "Check")] {
+            let cli = Cli::try_parse_from([
+                "crabwurcs",
+                "convert",
+                "--to",
+                "wurcs",
+                "--table",
+                value,
+                "Glc",
+            ])
+            .unwrap();
+            let Command::Convert { table, .. } = cli.command else {
+                panic!("expected convert command");
+            };
+            assert_eq!(format!("{table:?}"), expected);
+        }
+        assert!(
+            run_convert(
+                TextFormat::Auto,
+                TextFormat::Wurcs,
+                Some("G60371D-N".into()),
+                false,
+                TableArg::Off
+            )
+            .is_err()
+        );
+        assert!(
+            run_convert(
+                TextFormat::Auto,
+                TextFormat::Wurcs,
+                Some("G60371D-N".into()),
+                false,
+                TableArg::Fallback
+            )
+            .is_ok()
+        );
     }
 
     #[test]

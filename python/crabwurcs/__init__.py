@@ -125,9 +125,21 @@ def convert(
     value: str,
     to_format: FormatLike,
     from_format: FormatLike = Format.AUTO,
+    *,
+    table: str = "off",
 ) -> str:
-    """Convert a glycan between any supported text or molecular formats."""
+    """Convert a glycan between any supported text or molecular formats.
 
+    Conversions are computed. ``table="fallback"`` answers notation inputs
+    that cannot be converted from the bundled table of GlycoShape records;
+    ``table="check"`` raises ``ConversionError`` when the input's record in
+    that table holds another structure.
+    """
+
+    if table != "off":
+        return _native.convert_with_table(
+            value, _format_value(to_format), _format_value(from_format), table
+        )
     return Glycan.parse(value, from_format).to(to_format)
 
 

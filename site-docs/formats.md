@@ -22,6 +22,8 @@ The 13 uncertainty-preserving entries are `Hex`, `HexNAc`, `HexN`, `HexA`,
 `Assigned`. They can be parsed and rendered, but molecular export fails when
 it would require choosing missing stereochemistry.
 
-Bundled corpus tables accelerate exact known conversions. The registry-derived
+Conversions are computed from the parsed glycan; the bundled table of
+GlycoShape notations is consulted only on request (`convert_with_table`,
+`convert(..., table=...)`, `--table`). The registry-derived
 molecular index and de-novo recognizer handle concrete residues without a
 corpus hit; they do not require network access at runtime.

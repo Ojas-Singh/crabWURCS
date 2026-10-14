@@ -52,10 +52,12 @@ const PDB_COMPONENTS: &str = include_str!("../data/pdb_carbohydrate_components.t
 fn is_sugar_residue(name: &str, hetero: bool) -> bool {
     pdb_component_residue(name).is_some()
         // The GLYCAM code lookup is a loose heuristic (any 3-letter name can
-        // look like a code), so it is only applied to HETATM records. Amino
-        // acid names such as VAL collide with GLYCAM codes and must never be
-        // treated as glycans.
-        || (hetero && glycam_residue_kind(name).is_some())
+        // look like a code), so in ATOM records it is applied only to codes
+        // that begin with a linkage digit (`0aU`, `4YS`): amino acid names
+        // such as VAL collide with GLYCAM codes and must never be treated as
+        // glycans. GlycoShape's files write every residue as ATOM.
+        || ((hetero || name.starts_with(|character: char| character.is_ascii_digit()))
+            && glycam_residue_kind(name).is_some())
         || registry_named_residue(name).is_some()
 }
 
@@ -122,21 +124,10 @@ fn pdb_component_residue(name: &str) -> Option<Monosaccharide> {
 }
 
 fn mirror_stereochemistry(residue: &mut Monosaccharide) {
-    residue.skeleton_code = residue
-        .skeleton_code
-        .chars()
-        .map(|descriptor| match descriptor {
-            '1' => '2',
-            '2' => '1',
-            '3' => '4',
-            '4' => '3',
-            '5' => '6',
-            '6' => '5',
-            '7' => '8',
-            '8' => '7',
-            other => other,
-        })
-        .collect();
+    residue.skeleton_code = crabwurcs_core::mirror_skeleton_code(&residue.skeleton_code);
+    // The registry hint names the template's configuration, not its mirror
+    // image (L-Fuc's template mirrored is D-Fuc): classify by chemistry.
+    residue.residue_kind = None;
 }
 
 fn glycam_residue_kind(name: &str) -> Option<Monosaccharide> {
@@ -231,78 +222,96 @@ fn residue_to_monosaccharide(name: &str) -> Monosaccharide {
         })
 }
 
+fn without_provenance(glycans: Vec<ExtractedGlycanWithProvenance>) -> Vec<ExtractedGlycan> {
+    glycans
+        .into_iter()
+        .map(|glycan| ExtractedGlycan {
+            attachment_site: glycan.attachment_site,
+            graph: glycan.graph,
+        })
+        .collect()
+}
+
 pub fn extract_glycans_from_file(path: &std::path::Path) -> PdbResult<Vec<ExtractedGlycan>> {
-    use pdbtbx::ReadOptions;
-
-    let contents = std::fs::read_to_string(path)
-        .map_err(|error| PdbError::ParseError(format!("cannot read file: {error}")))?;
-    let path_str = path.to_string_lossy();
-    let (pdb, _errors) = ReadOptions::default()
-        .set_level(pdbtbx::StrictnessLevel::Loose)
-        .read(path_str.as_ref())
-        .map_err(|e| PdbError::ParseError(format!("cannot parse file: {:?}", e)))?;
-
-    Ok(extract_glycans_from_pdb_with_provenance(
-        &pdb,
-        &raw_pdb_residue_names(&contents),
-        &raw_pdb_bonds(&contents),
-    )?
-    .into_iter()
-    .map(|glycan| ExtractedGlycan {
-        attachment_site: glycan.attachment_site,
-        graph: glycan.graph,
-    })
-    .collect())
+    extract_glycans_with_provenance_from_file(path).map(without_provenance)
 }
 
 pub fn extract_glycans_from_str(contents: &str, is_mmcif: bool) -> PdbResult<Vec<ExtractedGlycan>> {
-    use pdbtbx::{Format, ReadOptions, StrictnessLevel};
-    use std::io::BufReader;
+    extract_glycans_with_provenance_from_str(contents, is_mmcif).map(without_provenance)
+}
 
-    let format = if is_mmcif { Format::Mmcif } else { Format::Pdb };
-    let reader = BufReader::new(contents.as_bytes());
-    let (pdb, _errors) = ReadOptions::default()
-        .set_level(StrictnessLevel::Loose)
-        .set_format(format)
-        .read_raw(reader)
-        .map_err(|e| PdbError::ParseError(format!("cannot parse: {:?}", e)))?;
+/// The PDB records the extractor reads: the coordinate records (`ATOM`,
+/// `HETATM`, `TER`) of the first model and the `CONECT` and `LINK` records,
+/// each once, followed by `END`.
+///
+/// Everything else is skipped. Free-text records such as the banner
+/// `REMARK` lines of GlycoShape's multi-model files are not in the column
+/// layout the PDB format prescribes and would otherwise stop the parser,
+/// and later models repeat the atoms of the first.
+pub fn pdb_records_used(contents: &str) -> String {
+    let mut kept = String::with_capacity(contents.len());
+    let mut seen_bonds = HashSet::new();
+    let mut first_model_done = false;
+    for line in contents.lines() {
+        let record = line.get(..6).unwrap_or(line).trim_end();
+        let keep = match record {
+            "ATOM" | "HETATM" | "TER" => !first_model_done,
+            "MODEL" => !first_model_done,
+            "ENDMDL" => {
+                let first = !first_model_done;
+                first_model_done = true;
+                first
+            }
+            "CONECT" | "LINK" => seen_bonds.insert(line.trim_end()),
+            _ => false,
+        };
+        if keep {
+            kept.push_str(line.trim_end());
+            kept.push('\n');
+        }
+    }
+    kept.push_str("END\n");
+    kept
+}
 
-    Ok(extract_glycans_from_pdb_with_provenance(
-        &pdb,
-        &raw_pdb_residue_names(contents),
-        &raw_pdb_bonds(contents),
-    )?
-    .into_iter()
-    .map(|glycan| ExtractedGlycan {
-        attachment_site: glycan.attachment_site,
-        graph: glycan.graph,
-    })
-    .collect())
+fn is_mmcif_text(contents: &str) -> bool {
+    contents.trim_start().starts_with("data_")
 }
 
 /// Extract glycans from a PDB/mmCIF file while retaining source residue
-/// identities for every graph node.
+/// identities for every graph node. PDB files are read through
+/// [`pdb_records_used`].
 pub fn extract_glycans_with_provenance_from_file(
     path: &std::path::Path,
 ) -> PdbResult<Vec<ExtractedGlycanWithProvenance>> {
-    use pdbtbx::ReadOptions;
-
     let contents = std::fs::read_to_string(path)
         .map_err(|error| PdbError::ParseError(format!("cannot read file: {error}")))?;
-    let path_str = path.to_string_lossy();
-    let (pdb, _errors) = ReadOptions::default()
-        .set_level(pdbtbx::StrictnessLevel::Loose)
-        .read(path_str.as_ref())
-        .map_err(|e| PdbError::ParseError(format!("cannot parse file: {:?}", e)))?;
-    extract_glycans_from_pdb_with_provenance(
-        &pdb,
-        &raw_pdb_residue_names(&contents),
-        &raw_pdb_bonds(&contents),
-    )
+    let mmcif_extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("cif") || extension.eq_ignore_ascii_case("mmcif")
+        });
+    if mmcif_extension {
+        use pdbtbx::ReadOptions;
+
+        let path_str = path.to_string_lossy();
+        let (pdb, _errors) = ReadOptions::default()
+            .set_level(pdbtbx::StrictnessLevel::Loose)
+            .read(path_str.as_ref())
+            .map_err(|e| PdbError::ParseError(format!("cannot parse file: {:?}", e)))?;
+        return extract_glycans_from_pdb_with_provenance(
+            &pdb,
+            &raw_pdb_residue_names(&contents),
+            &raw_pdb_bonds(&contents),
+        );
+    }
+    extract_glycans_with_provenance_from_str(&contents, is_mmcif_text(&contents))
 }
 
 /// Extract glycans from a PDB or mmCIF string while retaining source residue
-/// identities for every graph node.
+/// identities for every graph node. PDB text is read through
+/// [`pdb_records_used`].
 pub fn extract_glycans_with_provenance_from_str(
     contents: &str,
     is_mmcif: bool,
@@ -310,6 +319,13 @@ pub fn extract_glycans_with_provenance_from_str(
     use pdbtbx::{Format, ReadOptions, StrictnessLevel};
     use std::io::BufReader;
 
+    let filtered;
+    let contents = if is_mmcif {
+        contents
+    } else {
+        filtered = pdb_records_used(contents);
+        filtered.as_str()
+    };
     let format = if is_mmcif { Format::Mmcif } else { Format::Pdb };
     let reader = BufReader::new(contents.as_bytes());
     let (pdb, _errors) = ReadOptions::default()
@@ -897,6 +913,20 @@ mod tests {
         // Amino acid names must not be classified as glycans even when they
         // look like a GLYCAM code (VAL would map to V + A = Ara + L).
         assert!(!is_sugar_residue("VAL", false));
+        // GLYCAM codes that begin with a linkage digit are sugars in ATOM
+        // records too (GlycoShape writes every residue as ATOM).
+        assert!(is_sugar_residue("0aU", false));
+        assert!(is_sugar_residue("0FA", false));
+        assert!(!is_sugar_residue("VAL", false));
+    }
+
+    #[test]
+    fn free_text_records_and_later_models_are_skipped() {
+        let text = "REMARK     GENERATED BY GlycanAnalysisPipeline\nREMARK    |___/  free text\nHEADER    X\nMODEL        1\nATOM      1  C1  NAG X   1       0.000   0.000   0.000  1.00  0.00           C\nCONECT    1    2\nENDMDL\nMODEL        2\nATOM      1  C1  NAG X   1       9.000   0.000   0.000  1.00  0.00           C\nCONECT    1    2\nENDMDL\nEND\n";
+        assert_eq!(
+            pdb_records_used(text),
+            "MODEL        1\nATOM      1  C1  NAG X   1       0.000   0.000   0.000  1.00  0.00           C\nCONECT    1    2\nENDMDL\nEND\n"
+        );
     }
 
     #[test]
@@ -945,6 +975,16 @@ mod tests {
         assert_eq!(residue_to_monosaccharide("3hA").skeleton_code, "2211m");
         assert_eq!(residue_to_monosaccharide("3HA").skeleton_code, "1122m");
         assert_eq!(residue_to_monosaccharide("FUC").skeleton_code, "1221m");
+        // wwPDB CCD: AHR alpha-L-arabinofuranose, ARA/ARB alpha/beta-L-
+        // arabinopyranose. L is the configuration of the registry's Ara.
+        let ahr = residue_to_monosaccharide("AHR");
+        assert_eq!(
+            (ahr.skeleton_code.as_str(), ahr.ring_start, ahr.ring_end),
+            ("211h", Some(1), Some(4))
+        );
+        assert_eq!(residue_to_monosaccharide("ARA").skeleton_code, "211h");
+        assert_eq!(residue_to_monosaccharide("ARB").skeleton_code, "211h");
+        assert_eq!(residue_to_monosaccharide("FCA").skeleton_code, "2112m");
         assert!(!is_sugar_residue("RHM", true));
         assert_eq!(residue_to_monosaccharide("XYS").skeleton_code, "212h");
         assert_eq!(
@@ -963,8 +1003,12 @@ mod tests {
             let component = line.split('\t').next().unwrap();
             let residue = pdb_component_residue(component)
                 .unwrap_or_else(|| panic!("missing bundled CCD mapping for {component}"));
-            assert!(
-                residue.residue_kind.is_some(),
+            let kind = line.split('\t').nth(1).unwrap();
+            let mirrored = line.split('\t').nth(4) == Some("y");
+            assert_eq!(
+                crabwurcs_core::classify_residue_configuration(&residue)
+                    .map(|(kind, inverted)| (kind.canonical_name(), inverted)),
+                Some((kind, mirrored)),
                 "{component} lost its registry identity"
             );
             assert!(!residue.skeleton_code.contains('x'), "{component}");

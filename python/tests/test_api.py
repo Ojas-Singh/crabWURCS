@@ -73,7 +73,8 @@ def test_pdb_extraction_exposes_immutable_provenance(tmp_path):
     path.write_text(pdb)
     results = crabwurcs.extract_pdb_file(path)
     assert len(results) == 1
-    assert results[0].glycan.to("iupac-condensed") == "GlcNAc"
+    # The CCD code NAG declares the beta anomer of the reducing end.
+    assert results[0].glycan.to("iupac-condensed") == "GlcNAc(b1-"
     assert results[0].residues[0].chain == "A"
     assert results[0].residues[0].sequence_number == 1
 
@@ -81,6 +82,36 @@ def test_pdb_extraction_exposes_immutable_provenance(tmp_path):
 def test_python_cli_conversion(capsys):
     assert main(["convert", "--to", "wurcs", IUPAC]) == 0
     assert capsys.readouterr().out.startswith("WURCS=2.0/")
+
+
+def test_conversion_computes_and_the_table_is_used_on_request(capsys):
+    # A GlyTouCan accession stored as a GlycoShape name is not a notation.
+    try:
+        crabwurcs.convert("G60371D-N", "wurcs")
+    except crabwurcs.ParseError:
+        pass
+    else:
+        raise AssertionError("expected ParseError")
+    resolved = crabwurcs.convert("G60371D-N", "wurcs", table="fallback")
+    assert resolved.startswith("WURCS=2.0/8,23,22/")
+    name = "LFucpa1-2DGalpa1-3DGalpb1-3DGalpNAc"
+    assert crabwurcs.convert(name, "wurcs", "glycam", table="check") == crabwurcs.convert(
+        name, "wurcs", "glycam"
+    )
+    assert main(["convert", "--to", "wurcs", "--table", "fallback", "G60371D-N"]) == 0
+    assert capsys.readouterr().out.startswith("WURCS=2.0/8,23,22/")
+    assert main(["convert", "--to", "wurcs", "G60371D-N"]) == 1
+
+
+def test_written_names_keep_ring_size_configuration_and_reducing_end():
+    alpha = crabwurcs.convert("LArafb1-2LArafa1-OH", "wurcs", "glycam")
+    assert "[a211h-1a_1-4]" in alpha
+    assert crabwurcs.convert(alpha, "iupac-condensed", "wurcs") == "Araf(b1-2)Araf(a1-"
+    assert crabwurcs.convert(alpha, "glycam", "wurcs") == "LArafb1-2LArafa1-OH"
+    d_fuc = "WURCS=2.0/1,1,0/[u2112m]/1/"
+    assert crabwurcs.convert(d_fuc, "iupac-condensed", "wurcs") == "D-Fuc"
+    acetylated = crabwurcs.convert("DNeup5Ac[9A]a2-6DGalpb1-OH", "wurcs", "glycam")
+    assert "9*OCC/3=O" in acetylated
 
 
 def test_python_cli_normalization(capsys):

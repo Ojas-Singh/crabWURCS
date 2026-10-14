@@ -1,5 +1,6 @@
 use crabwurcs_core::{
-    Monosaccharide, MotifError, ResidueGraph, ResidueKind, classify_residue, find_motif_matches,
+    Monosaccharide, MotifError, ResidueGraph, ResidueKind, classify_residue,
+    classify_residue_configuration, find_motif_matches,
 };
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
@@ -259,9 +260,21 @@ fn registered_symbol(kind: ResidueKind, display_name: Option<&str>) -> Symbol {
 
 // ── Monosaccharide → SNFG symbol ───────────────────────────────────────────
 
+/// SNFG symbol of one residue.
+///
+/// The symbol identifies the monosaccharide whatever its absolute
+/// configuration (SNFG 2.0: "less common configurations need to be stated in
+/// a figure legend or by adding letters inside the symbol"), so D-Fuc is the
+/// red triangle of Fuc and D-Rha the green triangle of Rha. The label of an
+/// enantiomer carries its configuration (`D-Fuc`); [`render_svg`] writes the
+/// configuration letter inside the symbol.
 pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
-    if let Some(kind) = classify_residue(residue) {
-        return Ok(registered_symbol(kind, residue.display_name.as_deref()));
+    if let Some((kind, inverted)) = classify_residue_configuration(residue) {
+        let mut symbol = registered_symbol(kind, residue.display_name.as_deref());
+        if inverted && let Some(letter) = configuration_mark(residue) {
+            symbol.label = format!("{letter}-{}", symbol.label);
+        }
+        return Ok(symbol);
     }
     let skel = &residue.skeleton_code;
     let bare: String = skel.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -760,6 +773,42 @@ pub fn symbol_for(residue: &Monosaccharide) -> SnfgResult<Symbol> {
     })
 }
 
+/// The configuration letter (`D` or `L`) SNFG asks to be shown inside the
+/// symbol of a residue whose absolute configuration is not the default of its
+/// name (D-Fuc, D-Rha, L-Man, D-Ara, L-Gul, ...); `None` otherwise.
+fn configuration_mark(residue: &Monosaccharide) -> Option<char> {
+    let (kind, inverted) = classify_residue_configuration(residue)?;
+    if !inverted {
+        return None;
+    }
+    kind.default_configuration()
+        .map(|default| if default == 'L' { 'D' } else { 'L' })
+}
+
+/// The style rule of configuration letters, emitted only for a glycan that
+/// has one so that every other drawing is unchanged.
+fn configuration_label_css(graph: &ResidueGraph, font_family: &str, scale: f64) -> String {
+    if !graph
+        .inner()
+        .node_weights()
+        .any(|residue| configuration_mark(residue).is_some())
+    {
+        return String::new();
+    }
+    format!(
+        "  .config-label {{ font-family: {font_family}; font-size: {}px; font-weight: bold; fill: #000; text-anchor: middle; dominant-baseline: central; }}\n",
+        16.0 * scale
+    )
+}
+
+fn draw_configuration_mark(svg: &mut String, residue: &Monosaccharide, cx: f64, cy: f64) {
+    if let Some(letter) = configuration_mark(residue) {
+        svg.push_str(&format!(
+            "<text x=\"{cx}\" y=\"{cy}\" class=\"config-label\">{letter}</text>\n"
+        ));
+    }
+}
+
 // ── Geometry constants ─────────────────────────────────────────────────────
 
 pub const NODE_R: f64 = 25.0;
@@ -1254,6 +1303,13 @@ pub fn render_symbol_svg(residue: &Monosaccharide, opts: &RenderOptions) -> Snfg
             r##"<text x="{x}" y="{y}" font-family="{ff}" font-size="11px" fill="#000" text-anchor="middle" dominant-baseline="central">{label}</text>
 "##,
         ));
+    } else if let Some(letter) = configuration_mark(residue) {
+        let ff = opts.font_family.as_str();
+        let size = 16.0 * opts.scale;
+        svg.push_str(&format!(
+            r##"<text x="{cx}" y="{cy}" font-family="{ff}" font-size="{size}px" font-weight="bold" fill="#000" text-anchor="middle" dominant-baseline="central">{letter}</text>
+"##,
+        ));
     }
     svg.push_str("</svg>\n");
     Ok(svg)
@@ -1356,8 +1412,9 @@ fn render_svg_internal(
   .mod-label {{ font-family: {ff}; font-size: {ls}px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
   .node {{ fill: none; }}
   .res-label {{ font-family: {ff}; font-size: 11px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
-{highlight_css}</style>
+{config_css}{highlight_css}</style>
 "#,
+        config_css = configuration_label_css(graph, &opts.font_family, s),
         w = canvas_w,
         h = canvas_h,
         bw = BOND_W * s,
@@ -1524,6 +1581,8 @@ fn render_svg_internal(
                     y = cy,
                     lbl = label,
                 ));
+            } else {
+                draw_configuration_mark(&mut svg, residue, cx, cy);
             }
             if highlights.is_some() {
                 svg.push_str("</g>\n");
@@ -1540,7 +1599,15 @@ fn render_composition_svg(
     opts: &RenderOptions,
     highlights: Option<&HighlightSelection>,
 ) -> SnfgResult<String> {
-    let mut groups: Vec<(String, Symbol, ModificationLabels, bool, Vec<usize>)> = Vec::new();
+    type Group = (
+        String,
+        Symbol,
+        ModificationLabels,
+        bool,
+        Option<char>,
+        Vec<usize>,
+    );
+    let mut groups: Vec<Group> = Vec::new();
     for node in graph.inner().node_indices() {
         let residue = &graph.inner()[node];
         // Composition diagrams normally coalesce identical residues.  Keep
@@ -1549,8 +1616,9 @@ fn render_composition_svg(
         let selected =
             highlights.is_some_and(|selection| selection.node_indices.contains(&node.index()));
         let key = format!("{residue:?}|selected={selected}");
-        if let Some((_, _, _, _, nodes)) =
-            groups.iter_mut().find(|(value, _, _, _, _)| *value == key)
+        if let Some((_, _, _, _, _, nodes)) = groups
+            .iter_mut()
+            .find(|(value, _, _, _, _, _)| *value == key)
         {
             nodes.push(node.index());
         } else {
@@ -1560,6 +1628,7 @@ fn render_composition_svg(
                 symbol.clone(),
                 build_modification_labels(residue),
                 is_assigned_symbol(residue, &symbol),
+                configuration_mark(residue),
                 vec![node.index()],
             ));
         }
@@ -1579,17 +1648,18 @@ fn render_composition_svg(
         r#"<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="snfg-title snfg-desc" viewBox="0 0 {width} {height}" width="{width}" height="{height}">
 {metadata}<style>
   .res-label {{ font-family: {font}; font-size: 11px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
-  .mod-label {{ font-family: {font}; font-size: {mod_size}px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
+{config_css}  .mod-label {{ font-family: {font}; font-size: {mod_size}px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
   .count {{ font-family: {font}; font-size: {count_size}px; font-weight: 600; fill: #000; text-anchor: middle; }}
 {highlight_css}</style>
 "#,
         font = opts.font_family,
         mod_size = LABEL_SIZE * scale,
+        config_css = configuration_label_css(graph, &opts.font_family, scale),
         count_size = 18.0 * scale,
         highlight_css = highlight_css,
         metadata = metadata,
     );
-    for (index, (_, symbol, modification, assigned, nodes)) in groups.iter().enumerate() {
+    for (index, (_, symbol, modification, assigned, mark, nodes)) in groups.iter().enumerate() {
         let x = 75.0 * scale + index as f64 * spacing;
         let y = 62.0 * scale;
         if let Some(selection) = highlights {
@@ -1613,6 +1683,10 @@ fn render_composition_svg(
             svg.push_str(&format!(
                 r#"<text x="{x}" y="{y}" class="res-label">{label}</text>
 "#,
+            ));
+        } else if let Some(letter) = mark {
+            svg.push_str(&format!(
+                "<text x=\"{x}\" y=\"{y}\" class=\"config-label\">{letter}</text>\n"
             ));
         }
         if !modification.above.is_empty() {
@@ -2199,9 +2273,9 @@ mod tests {
     fn rare_hexose_epimers_use_their_snfg_families() {
         for (code, label, fill) in [
             ("2111", "Alt", colour::ALT),
-            ("1121", "Gul", colour::GUL),
+            ("1121", "L-Gul", colour::GUL),
             ("2222", "All", colour::ALL),
-            ("2221", "Tal", colour::TAL),
+            ("2221", "L-Tal", colour::TAL),
             ("2121", "Ido", colour::IDO),
         ] {
             let g = parse(&format!("WURCS=2.0/1,1,0/[u{code}h]/1/"));
@@ -2222,6 +2296,97 @@ mod tests {
     }
 
     #[test]
+    fn enantiomers_use_the_snfg_symbol_of_their_name_with_a_configuration_letter() {
+        // GlycoShape GS00025 (D-Fuc) and GS00657 (D-Rha) were drawn with the
+        // Gal circle and the Man circle.
+        for (wurcs, shape, fill, letter) in [
+            (
+                "WURCS=2.0/1,1,0/[a2112m-1a_1-5]/1/",
+                Shape::Triangle,
+                colour::RED,
+                'D',
+            ),
+            (
+                "WURCS=2.0/1,1,0/[a1122m-1a_1-5]/1/",
+                Shape::Triangle,
+                colour::GREEN,
+                'D',
+            ),
+            (
+                "WURCS=2.0/1,1,0/[a122h-1b_1-4]/1/",
+                Shape::Star,
+                colour::GREEN,
+                'D',
+            ),
+            (
+                "WURCS=2.0/1,1,0/[a2211h-1a_1-5]/1/",
+                Shape::Circle,
+                colour::GREEN,
+                'L',
+            ),
+            (
+                "WURCS=2.0/1,1,0/[a1121h-1a_1-5]/1/",
+                Shape::Circle,
+                colour::ORANGE,
+                'L',
+            ),
+            (
+                "WURCS=2.0/1,1,0/[a2221h-1a_1-5]/1/",
+                Shape::Circle,
+                colour::LIGHT_BLUE,
+                'L',
+            ),
+            (
+                "WURCS=2.0/1,1,0/[a1211m-1a_1-5]/1/",
+                Shape::Triangle,
+                colour::BLUE,
+                'L',
+            ),
+            (
+                "WURCS=2.0/1,1,0/[a2112m-1a_1-5_2*NCC/3=O]/1/",
+                Shape::DividedTriangle,
+                colour::RED,
+                'D',
+            ),
+        ] {
+            let g = parse(wurcs);
+            let residue = g.residue(g.root().unwrap()).unwrap();
+            let symbol = symbol_for(residue).unwrap();
+            assert_eq!((symbol.shape, symbol.fill), (shape, fill), "{wurcs}");
+            assert_eq!(configuration_mark(residue), Some(letter), "{wurcs}");
+            let svg = render_svg(&g).unwrap();
+            assert!(
+                svg.contains(&format!("class=\"config-label\">{letter}</text>")),
+                "{wurcs}"
+            );
+        }
+        // Default configurations carry no letter.
+        let fuc = parse("WURCS=2.0/1,1,0/[a1221m-1a_1-5]/1/");
+        assert!(!render_svg(&fuc).unwrap().contains("config-label\">"));
+
+        // Every concrete registry residue's enantiomer keeps its symbol.
+        for kind in ResidueKind::ALL {
+            if kind.is_generic() || kind.unique_residue().is_none() {
+                continue;
+            }
+            let mut residue = crabwurcs_core::residue_from_kind(*kind).unwrap();
+            let expected = registered_symbol(*kind, None);
+            residue.skeleton_code = crabwurcs_core::mirror_skeleton_code(&residue.skeleton_code);
+            residue.residue_kind = None;
+            if crabwurcs_core::classify_residue(&residue).is_some() {
+                // The mirror image is itself a registry entry (Abe/Col).
+                continue;
+            }
+            let symbol = symbol_for(&residue).unwrap();
+            assert_eq!(
+                (symbol.shape, symbol.fill),
+                (expected.shape, expected.fill),
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_symbol_xyl_uses_exact_snfg_orange() {
         let g = parse("WURCS=2.0/1,1,0/[u212h]/1/");
         let res = g.residue(g.root().unwrap()).unwrap();
@@ -2232,11 +2397,11 @@ mod tests {
 
     #[test]
     fn lyx_absolute_configurations_use_yellow() {
-        for code in ["112", "221"] {
+        for (code, label) in [("112", "Lyx"), ("221", "L-Lyx")] {
             let g = parse(&format!("WURCS=2.0/1,1,0/[u{code}h]/1/"));
             let symbol = symbol_for(g.residue(g.root().unwrap()).unwrap()).unwrap();
             assert_eq!(symbol.shape, Shape::Star, "{code}");
-            assert_eq!(symbol.label, "Lyx", "{code}");
+            assert_eq!(symbol.label, label, "{code}");
             assert_eq!(symbol.fill, colour::YELLOW, "{code}");
         }
     }
