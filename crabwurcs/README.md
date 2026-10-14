@@ -30,14 +30,14 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-crabwurcs = "0.3.1"
+crabwurcs = "0.3.2"
 ```
 
 For optional RDKit backend support:
 
 ```toml
 [dependencies]
-crabwurcs = { version = "0.3.1", features = ["rdkit-backend"] }
+crabwurcs = { version = "0.3.2", features = ["rdkit-backend"] }
 ```
 
 ## Quick Start

@@ -24,8 +24,8 @@ pip install crabwurcs
 Rust library or CLI:
 
 ```bash
-cargo add crabwurcs@0.3.1
-cargo install crabwurcs-cli@0.3.1
+cargo add crabwurcs@0.3.2
+cargo install crabwurcs-cli@0.3.2
 ```
 
 Prebuilt Python wheels use the stable CPython ABI and do not require RDKit or
@@ -109,7 +109,7 @@ rare constructs instead of dropping information. No network service is used.
   repeats do not silently collapse to one molecule.
 - PDB/mmCIF extraction retains chain, sequence number, insertion code, and
   graph-node provenance. Coordinate generation and PDB writing are out of
-  scope for 0.3.1.
+  scope for 0.3.2.
 
 See the [complete residue table](https://github.com/Ojas-Singh/crabWURCS/blob/main/crabwurcs/docs/supported-monosaccharides.md)
 and [format limitations](https://ojas-singh.github.io/crabWURCS/formats/) for details.
