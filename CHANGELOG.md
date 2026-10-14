@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.2 - 2026-10-14
 
 Fixes for defects found while auditing the GlycoShape database. Several
 written strings change; they are listed under "Output changes".
