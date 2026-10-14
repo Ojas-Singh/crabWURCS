@@ -191,6 +191,90 @@ residue_kinds! {
     (Psi, "Psi", Some("ha222h-2x_2-6"), false, ["Psicose"])
 }
 
+impl ResidueKind {
+    /// Absolute configuration (`'D'` or `'L'`) of this kind's registry
+    /// UniqueRES, read from the stereodescriptor of its highest-numbered
+    /// stereocentre. This is the default configuration of the residue name
+    /// (SNFG: L for Ara, Fuc, Ido, IdoA, Rha, Alt, AltA, Sor and Api, D for
+    /// the others). `None` for generic and display-only kinds.
+    pub fn default_configuration(self) -> Option<char> {
+        if self.is_generic() {
+            return None;
+        }
+        let unique = self.unique_residue()?;
+        let header = unique.split(['-', '_']).next().unwrap_or(unique);
+        let skeleton = ["Aad", "ha", "a"]
+            .iter()
+            .find_map(|prefix| header.strip_prefix(prefix))
+            .unwrap_or(header);
+        skeleton
+            .chars()
+            .rev()
+            .find(|character| matches!(character, '1' | '2'))
+            .map(|character| if character == '1' { 'L' } else { 'D' })
+    }
+
+    /// The WURCS ring closure of this kind's registry UniqueRES:
+    /// `Some(true)` for a furanose, `Some(false)` for a pyranose.
+    pub fn default_is_furanose(self) -> Option<bool> {
+        let unique = self.unique_residue()?;
+        let ring = unique.split('_').nth(1)?;
+        let (start, end) = ring.split_once('-')?;
+        let size = end
+            .parse::<u8>()
+            .ok()?
+            .checked_sub(start.parse::<u8>().ok()?)?;
+        match size {
+            3 => Some(true),
+            4 => Some(false),
+            _ => None,
+        }
+    }
+}
+
+/// The enantiomer of a WURCS skeleton code: every backbone stereodescriptor
+/// is inverted (`1`↔`2`, `3`↔`4`, `5`↔`6`, `7`↔`8`); `d`, `x`, `h`, `m`, `A`
+/// and other non-stereo descriptors are kept.
+pub fn mirror_skeleton_code(skeleton_code: &str) -> String {
+    skeleton_code
+        .chars()
+        .map(|descriptor| match descriptor {
+            '1' => '2',
+            '2' => '1',
+            '3' => '4',
+            '4' => '3',
+            '5' => '6',
+            '6' => '5',
+            '7' => '8',
+            '8' => '7',
+            other => other,
+        })
+        .collect()
+}
+
+/// Classify a residue as an SNFG registry residue in either absolute
+/// configuration.
+///
+/// Returns the kind and `false` when the residue has the configuration of the
+/// registry entry, or the kind and `true` when it is that entry's enantiomer
+/// (for example D-Fuc, L-Man or D-Ara). Generic kinds carry no configuration
+/// and are only returned directly.
+pub fn classify_residue_configuration(residue: &Monosaccharide) -> Option<(ResidueKind, bool)> {
+    if let Some(kind) = classify_residue(residue) {
+        return Some((kind, false));
+    }
+    let mirrored_code = mirror_skeleton_code(&residue.skeleton_code);
+    if mirrored_code == residue.skeleton_code {
+        return None;
+    }
+    let mut mirrored = residue.clone();
+    mirrored.skeleton_code = mirrored_code;
+    mirrored.residue_kind = None;
+    classify_residue(&mirrored)
+        .filter(|kind| !kind.is_generic())
+        .map(|kind| (kind, true))
+}
+
 pub fn residue_from_kind(kind: ResidueKind) -> CoreResult<Monosaccharide> {
     let unique = kind
         .unique_residue()
@@ -313,6 +397,79 @@ mod tests {
             residue.residue_kind = None;
             assert_eq!(classify_residue(&residue), Some(*kind), "{kind:?}");
         }
+    }
+
+    #[test]
+    fn enantiomers_of_registry_residues_classify_with_their_configuration() {
+        for (wurcs, kind, inverted) in [
+            (
+                "WURCS=2.0/1,1,0/[a1221m-1a_1-5]/1/",
+                ResidueKind::Fuc,
+                false,
+            ),
+            ("WURCS=2.0/1,1,0/[a2112m-1a_1-5]/1/", ResidueKind::Fuc, true),
+            ("WURCS=2.0/1,1,0/[a1122m-1a_1-5]/1/", ResidueKind::Rha, true),
+            ("WURCS=2.0/1,1,0/[a122h-1b_1-4]/1/", ResidueKind::Ara, true),
+            ("WURCS=2.0/1,1,0/[a2211h-1a_1-5]/1/", ResidueKind::Man, true),
+            ("WURCS=2.0/1,1,0/[a1121h-1a_1-5]/1/", ResidueKind::Gul, true),
+            ("WURCS=2.0/1,1,0/[a2221h-1a_1-5]/1/", ResidueKind::Tal, true),
+            (
+                "WURCS=2.0/1,1,0/[a2112m-1a_1-5_2*NCC/3=O]/1/",
+                ResidueKind::FucNAc,
+                true,
+            ),
+        ] {
+            let graph = crate::parse_wurcs(wurcs).unwrap();
+            let residue = graph.residue(graph.root().unwrap()).unwrap();
+            assert_eq!(
+                classify_residue_configuration(residue),
+                Some((kind, inverted)),
+                "{wurcs}"
+            );
+        }
+        let generic = crate::parse_wurcs("WURCS=2.0/1,1,0/[axxxxh-1a_1-5]/1/").unwrap();
+        let generic = generic.residue(generic.root().unwrap()).unwrap();
+        assert_eq!(
+            classify_residue_configuration(generic),
+            Some((ResidueKind::Hex, false))
+        );
+    }
+
+    #[test]
+    fn default_configurations_follow_the_snfg_table() {
+        for kind in [
+            ResidueKind::Ara,
+            ResidueKind::Fuc,
+            ResidueKind::Ido,
+            ResidueKind::IdoA,
+            ResidueKind::Rha,
+            ResidueKind::Alt,
+            ResidueKind::AltA,
+            ResidueKind::Sor,
+        ] {
+            assert_eq!(kind.default_configuration(), Some('L'), "{kind:?}");
+        }
+        for kind in [
+            ResidueKind::Glc,
+            ResidueKind::Gal,
+            ResidueKind::Man,
+            ResidueKind::Gul,
+            ResidueKind::Tal,
+            ResidueKind::All,
+            ResidueKind::Xyl,
+            ResidueKind::Lyx,
+            ResidueKind::Rib,
+            ResidueKind::Qui,
+            ResidueKind::Fru,
+            ResidueKind::Neu5Ac,
+            ResidueKind::Kdo,
+        ] {
+            assert_eq!(kind.default_configuration(), Some('D'), "{kind:?}");
+        }
+        assert_eq!(ResidueKind::Hex.default_configuration(), None);
+        assert_eq!(ResidueKind::Api.default_is_furanose(), Some(true));
+        assert_eq!(ResidueKind::Ara.default_is_furanose(), Some(false));
+        assert_eq!(ResidueKind::Fru.default_is_furanose(), Some(false));
     }
 
     #[test]

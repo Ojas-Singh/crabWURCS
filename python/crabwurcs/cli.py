@@ -26,6 +26,7 @@ def _parser() -> argparse.ArgumentParser:
     conversion.add_argument("--input-file", action="store_true")
     conversion.add_argument("--from", dest="from_format", default="auto")
     conversion.add_argument("--to", dest="to_format", required=True)
+    conversion.add_argument("--table", default="off", choices=("off", "fallback", "check"))
 
     normalization = commands.add_parser("normalize-wurcs", help="normalize WURCS 2.0 text")
     normalization.add_argument("input", nargs="?")
@@ -57,7 +58,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "convert":
-            print(convert(_text(args.input, args.input_file), args.to_format, args.from_format))
+            print(
+                convert(
+                    _text(args.input, args.input_file),
+                    args.to_format,
+                    args.from_format,
+                    table=args.table,
+                )
+            )
         elif args.command == "normalize-wurcs":
             from . import normalize_wurcs
 

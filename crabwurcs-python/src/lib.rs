@@ -226,6 +226,34 @@ fn detect_format(value: &str) -> &'static str {
     }
 }
 
+/// Convert between notations with the bundled GlycoShape table used as
+/// `table` says (`off`, `fallback` or `check`).
+#[pyfunction]
+fn convert_with_table(
+    value: &str,
+    to_format: &str,
+    from_format: &str,
+    table: &str,
+) -> PyResult<String> {
+    let mode = match table.trim().to_ascii_lowercase().as_str() {
+        "off" => crabwurcs::TableMode::Off,
+        "fallback" => crabwurcs::TableMode::Fallback,
+        "check" => crabwurcs::TableMode::Check,
+        other => {
+            return Err(ParseError::new_err(format!(
+                "unknown table mode: {other} (expected off, fallback or check)"
+            )));
+        }
+    };
+    crabwurcs::convert_with_table(
+        value,
+        parse_format(from_format, true)?,
+        parse_format(to_format, false)?,
+        mode,
+    )
+    .map_err(|error| ConversionError::new_err(error.to_string()))
+}
+
 #[pyfunction]
 fn normalize_wurcs(value: &str) -> PyResult<String> {
     crabwurcs::normalize_wurcs(value)
@@ -242,6 +270,7 @@ fn crabwurcs_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(extract_pdb_file, module)?)?;
     module.add_function(wrap_pyfunction!(detect_format, module)?)?;
     module.add_function(wrap_pyfunction!(normalize_wurcs, module)?)?;
+    module.add_function(wrap_pyfunction!(convert_with_table, module)?)?;
     module.add("CrabWurcsError", module.py().get_type::<CrabWurcsError>())?;
     module.add("ParseError", module.py().get_type::<ParseError>())?;
     module.add("ConversionError", module.py().get_type::<ConversionError>())?;

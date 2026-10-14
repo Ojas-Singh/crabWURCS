@@ -11,12 +11,12 @@
 //! - [`pdb`] — glycan extraction from PDB/mmCIF structures
 //! - [`snfg`] — SNFG SVG rendering (seq2snfg equivalent)
 //!
-//! The facade also contains compact source-WURCS and notation-derived lookup
-//! tables for all 943 GlycoShape records (938 molecularly specified structures
-//! plus four notation-only edge cases, with duplicate records sharing rows).
-//! Equivalent SMILES serializations are resolved by the pure-Rust molecular
-//! backend, with de-novo molecular extraction and an authoritative
-//! registry-derived index for every concrete monosaccharide.
+//! Conversions are computed from the parsed residue graph. The facade also
+//! carries a table of the notations of 942 GlycoShape records (938
+//! molecularly specified structures plus four notation-only edge cases); it is
+//! consulted only when asked, through [`convert_with_table`], either as a
+//! fallback for inputs that cannot be converted or as a check of a computed
+//! structure. SMILES is written and read by the pure-Rust molecular backend.
 //!
 //! The sections below — generated from the renderer's own output — document
 //! every supported monosaccharide symbol, the SNFG rendering rules, and motif
@@ -152,6 +152,21 @@ fn corpus_record_for_input(input: &str, format: Format) -> Option<CorpusRecord<'
     if input.is_empty() {
         return None;
     }
+    if format == Format::Auto {
+        // Any column: a fallback must not depend on detecting the format.
+        if input.starts_with("WURCS=") {
+            return corpus_record_for_input(input, Format::Wurcs);
+        }
+        return corpus_records().find(|record| {
+            [
+                record.iupac,
+                record.iupac_extended,
+                record.glycam,
+                record.smiles,
+            ]
+            .contains(&input)
+        });
+    }
     if format == Format::Wurcs {
         if let Some(record) = corpus_records().find(|record| record.wurcs == input) {
             return Some(record);
@@ -169,41 +184,22 @@ fn corpus_record_for_input(input: &str, format: Format) -> Option<CorpusRecord<'
     })
 }
 
-fn corpus_smiles_for_graph(graph: &ResidueGraph) -> Option<&'static str> {
-    if let Some(source) = graph.source_iupac()
-        && let Some(record) = corpus_record_for_input(source, Format::IupacCondensed)
-    {
-        return record.notation(Format::Smiles);
-    }
-    if let Some(source) = graph.source_iupac_extended()
-        && let Some(record) = corpus_record_for_input(source, Format::IupacExtended)
-    {
-        return record.notation(Format::Smiles);
-    }
-    if let Some(source) = graph.source_glycam()
-        && let Some(record) = corpus_record_for_input(source, Format::Glycam)
-    {
-        return record.notation(Format::Smiles);
-    }
-
-    core::write_wurcs(graph)
-        .ok()
-        .and_then(|wurcs| corpus_record_for_input(&wurcs, Format::Wurcs))
-        .and_then(|record| record.notation(Format::Smiles))
+/// Whether `value` holds a GLYCAM linkage written without parentheses
+/// (`a1-4`, `b2-1`, `a2-3`).
+fn glycam_linkage(value: &str) -> bool {
+    value.as_bytes().windows(4).any(|window| {
+        matches!(window[0], b'a' | b'b')
+            && window[1].is_ascii_digit()
+            && window[2] == b'-'
+            && (window[3].is_ascii_digit() || window[3] == b'?' || window[3] == b'O')
+    })
 }
 
+/// Guess the notation of `input` from its syntax.
 pub fn detect_format(input: &str) -> Format {
     let value = input.trim();
     if value.starts_with("WURCS=") {
         Format::Wurcs
-    } else if corpus_record_for_input(value, Format::Smiles).is_some() {
-        Format::Smiles
-    } else if corpus_record_for_input(value, Format::IupacExtended).is_some() {
-        Format::IupacExtended
-    } else if corpus_record_for_input(value, Format::Glycam).is_some() {
-        Format::Glycam
-    } else if corpus_record_for_input(value, Format::IupacCondensed).is_some() {
-        Format::IupacCondensed
     } else if value.contains('→')
         || value.contains("α-")
         || value.contains("β-")
@@ -218,10 +214,7 @@ pub fn detect_format(input: &str) -> Format {
     {
         Format::Smiles
     } else if !value.contains('(')
-        && (value.contains("a1-")
-            || value.contains("b1-")
-            || value.starts_with('D')
-            || value.starts_with('L'))
+        && (glycam_linkage(value) || value.starts_with('D') || value.starts_with('L'))
     {
         Format::Glycam
     } else {
@@ -241,13 +234,7 @@ pub fn parse_notation(input: &str, format: Format) -> ConversionResult<ResidueGr
         Format::IupacCondensed => iupac::parse_iupac_condensed(input)?,
         Format::IupacExtended => iupac::parse_iupac_extended(input)?,
         Format::Glycam => iupac::parse_glycam(input)?,
-        Format::Smiles => {
-            if let Some(record) = corpus_record_for_input(input, Format::Smiles) {
-                core::parse_wurcs(record.wurcs)?
-            } else {
-                mol::wurcs_from_molecule(input, mol::ChemFormat::Smiles)?
-            }
-        }
+        Format::Smiles => mol::wurcs_from_molecule(input, mol::ChemFormat::Smiles)?,
     })
 }
 
@@ -258,35 +245,87 @@ pub fn write_notation(graph: &ResidueGraph, format: Format) -> ConversionResult<
         Format::IupacCondensed => iupac::write_iupac_condensed(graph)?,
         Format::IupacExtended => iupac::write_iupac_extended(graph)?,
         Format::Glycam => iupac::write_glycam(graph)?,
-        Format::Smiles => match corpus_smiles_for_graph(graph) {
-            Some(smiles) => smiles.to_owned(),
-            None => mol::molecule_from_wurcs(graph, mol::ChemFormat::Smiles)?,
-        },
+        Format::Smiles => mol::molecule_from_wurcs(graph, mol::ChemFormat::Smiles)?,
     })
 }
 
+/// Convert `input` from one notation to another by parsing it into the
+/// residue graph and writing that graph. The bundled GlycoShape table is not
+/// consulted; see [`convert_with_table`].
 pub fn convert(input: &str, from: Format, to: Format) -> ConversionResult<String> {
     if to == Format::Auto {
         return Err(ConversionError::AutoOutput);
     }
-    let resolved_from = if from == Format::Auto {
-        detect_format(input)
-    } else {
-        from
-    };
-    if let Some(output) =
-        corpus_record_for_input(input, resolved_from).and_then(|record| record.notation(to))
-    {
-        if to == Format::Wurcs {
-            if let Some(normalized) = corpus_wurcs_normalizations().get(output) {
-                return Ok(normalized.clone());
-            }
-            let graph = core::parse_wurcs(output)?;
-            return Ok(core::write_wurcs(&graph)?);
-        }
-        return Ok(output.to_owned());
-    }
     write_notation(&parse_notation(input, from)?, to)
+}
+
+/// How [`convert_with_table`] uses the bundled table of GlycoShape notations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TableMode {
+    /// Compute the conversion; never consult the table (as [`convert`]).
+    #[default]
+    Off,
+    /// Compute the conversion; only when the input cannot be converted,
+    /// answer from the table record that holds the input, if there is one.
+    Fallback,
+    /// Compute the conversion and require the structure read from the input
+    /// to be the one of the table record that holds the input, if any.
+    Check,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum TableConversionError {
+    #[error(transparent)]
+    Conversion(#[from] ConversionError),
+    #[error(
+        "the input reads as {computed}, but the bundled GlycoShape record for it holds {table}"
+    )]
+    Disagreement { computed: String, table: String },
+}
+
+/// The notation in `to` of the bundled GlycoShape record that holds `input`
+/// in `from` (`Format::Auto`: in any column), without converting anything.
+/// WURCS answers are normalized.
+pub fn table_lookup(input: &str, from: Format, to: Format) -> Option<String> {
+    let record = corpus_record_for_input(input, from)?;
+    let value = record.notation(to)?;
+    if to == Format::Wurcs {
+        return corpus_wurcs_normalizations()
+            .get(value)
+            .cloned()
+            .or_else(|| Some(value.to_owned()));
+    }
+    Some(value.to_owned())
+}
+
+/// [`convert`], with the bundled GlycoShape table used as `mode` says.
+pub fn convert_with_table(
+    input: &str,
+    from: Format,
+    to: Format,
+    mode: TableMode,
+) -> Result<String, TableConversionError> {
+    if to == Format::Auto {
+        return Err(ConversionError::AutoOutput.into());
+    }
+    match mode {
+        TableMode::Off => Ok(convert(input, from, to)?),
+        TableMode::Fallback => match convert(input, from, to) {
+            Ok(output) => Ok(output),
+            Err(error) => table_lookup(input, from, to).ok_or(error.into()),
+        },
+        TableMode::Check => {
+            let graph = parse_notation(input, from)?;
+            if let Some(table) = table_lookup(input, from, Format::Wurcs) {
+                let computed = core::write_wurcs(&graph).map_err(ConversionError::from)?;
+                let table = core::normalize_wurcs(&table).unwrap_or(table);
+                if computed != table {
+                    return Err(TableConversionError::Disagreement { computed, table });
+                }
+            }
+            Ok(write_notation(&graph, to)?)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -324,34 +363,32 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn every_corpus_notation_reaches_its_exact_smiles() {
-        let records: Vec<_> = corpus_records().collect();
-        assert_eq!(records.len(), 942);
+    /// The only table notations that do not compute to their record's WURCS.
+    /// Each is a defect of the stored notation, not of the readers.
+    const TABLE_RECORDS_THAT_DISAGREE: &[(&str, &str)] = &[
+        // GlyTouCan accessions stored where a name belongs (GS00722, GS00728):
+        // identifiers, which crabWURCS does not look up.
+        ("glycam", "G50508SG"),
+        // GS00430: a damaged IUPAC string.
+        (
+            "iupac",
+            "Galb1-4)Gala1-3(?24-diacetimido-246-trideoxyhexose)",
+        ),
+        ("iupac", "G60371D-N"),
+        ("glycam", "G60371DN"),
+        // GS00954: the archetype name leaves the reducing-end anomer open,
+        // the record's WURCS (GlyTouCan G66397DB) declares it beta.
+        (
+            "glycam",
+            "DGlcpb1-3[DGalpNAca1-4DGalpNAca1-4]DGalpNAca1-4DGalpNAca1-4DGalpNAca1-3DBacp[2Ac,4Ac]",
+        ),
+    ];
 
-        for record in records {
-            if record.smiles.is_empty() {
-                continue;
-            }
-            for (notation, format) in [
-                (record.wurcs, Format::Wurcs),
-                (record.iupac, Format::IupacCondensed),
-                (record.iupac_extended, Format::IupacExtended),
-                (record.glycam, Format::Glycam),
-            ] {
-                if !notation.is_empty() {
-                    assert_eq!(
-                        convert(notation, format, Format::Smiles).unwrap(),
-                        record.smiles
-                    );
-                }
-            }
-
-            assert_eq!(
-                convert(record.smiles, Format::Smiles, Format::Wurcs).unwrap(),
-                corpus_wurcs_normalizations()[record.wurcs]
-            );
-        }
+    /// Table notations that only the table can resolve.
+    fn only_in_the_table(notation: &str) -> bool {
+        TABLE_RECORDS_THAT_DISAGREE[..4]
+            .iter()
+            .any(|(_, value)| *value == notation)
     }
 
     #[test]
@@ -364,78 +401,140 @@ mod tests {
                 record.glycam,
                 record.smiles,
             ] {
-                if !notation.is_empty() {
-                    let graph = parse_notation(notation, Format::Auto).unwrap_or_else(|error| {
-                        panic!("failed to autodetect/parse {notation}: {error}")
-                    });
-                    assert!(graph.node_count() > 0, "{notation}");
+                if notation.is_empty() || only_in_the_table(notation) {
+                    continue;
                 }
+                let graph = parse_notation(notation, Format::Auto).unwrap_or_else(|error| {
+                    panic!("failed to autodetect/parse {notation}: {error}")
+                });
+                assert!(graph.node_count() > 0, "{notation}");
             }
         }
     }
 
     #[test]
-    fn notation_only_glycoshape_rows_convert_exactly() {
+    fn notation_only_glycoshape_rows_convert_by_computation() {
         let kdo = convert("D-KDOp", Format::Auto, Format::Wurcs).unwrap();
         assert_eq!(kdo, "WURCS=2.0/1,1,0/[AUd1122h]/1/");
 
         let bac_iupac = "DGlcpb1-3[DGalpNAca1-4DGalpNAca1-4]DGalpNAca1-4DGalpNAca1-4DGalpNAca1-3DBacp[2Ac,4Ac]b1-OH";
         let bac_glycam = convert(bac_iupac, Format::Auto, Format::Glycam).unwrap();
-        assert!(bac_glycam.ends_with("DBacp[2Ac,4Ac]"));
-
-        let accession = convert("G60371D-N", Format::Auto, Format::Wurcs).unwrap();
-        assert!(accession.starts_with("WURCS=2.0/8,23,22/"));
+        assert_eq!(bac_glycam, bac_iupac);
+        assert!(
+            convert(bac_iupac, Format::Auto, Format::IupacCondensed)
+                .unwrap()
+                .ends_with("Bac2Ac4Ac(b1-")
+        );
     }
 
     #[test]
-    fn every_verified_corpus_notation_converts_exactly_to_every_other() {
-        for record in corpus_records() {
-            let values = [
-                (record.wurcs, Format::Wurcs),
-                (record.iupac, Format::IupacCondensed),
-                (record.iupac_extended, Format::IupacExtended),
-                (record.glycam, Format::Glycam),
-                (record.smiles, Format::Smiles),
-            ];
-            for (input, from) in values {
-                if input.is_empty() {
+    fn conversion_computes_and_the_table_is_an_explicit_fallback_or_check() {
+        // GS00728's WURCS used to be answered from its table row: `G60371D-N`.
+        let g60371dn = table_lookup("G60371D-N", Format::IupacCondensed, Format::Wurcs).unwrap();
+        let iupac = convert(&g60371dn, Format::Wurcs, Format::IupacCondensed).unwrap();
+        assert!(
+            iupac.starts_with("Neu5Ac(a2-3)[GalNAc(b1-4)]Gal(b1-4)"),
+            "{iupac}"
+        );
+        assert!(!iupac.contains("G60371"), "{iupac}");
+        assert_eq!(
+            convert(&iupac, Format::IupacCondensed, Format::Wurcs).unwrap(),
+            g60371dn
+        );
+        // GS00430's WURCS used to give its damaged IUPAC string.
+        let g85731cn = "WURCS=2.0/3,3,2/[uxxxxm_2*NCC/3=O_4*NCC/3=O][a2112h-1a_1-5][a2112h-1b_1-5]/1-2-3/a3-b1_b4-c1";
+        assert_eq!(
+            convert(g85731cn, Format::Wurcs, Format::IupacCondensed).unwrap(),
+            "Gal(b1-4)Gal(a1-3)dHexNAc4NAc"
+        );
+        // GS00954's WURCS used to give its GLYCAM name as "IUPAC".
+        let g66397db = "WURCS=2.0/3,7,6/[a2122m-1b_1-5_2*NCC/3=O_4*NCC/3=O][a2112h-1a_1-5_2*NCC/3=O][a2122h-1b_1-5]/1-2-2-2-3-2-2/a3-b1_b4-c1_c4-d1_d3-e1_d4-f1_f4-g1";
+        assert_eq!(
+            convert(g66397db, Format::Wurcs, Format::IupacCondensed).unwrap(),
+            "Glc(b1-3)[GalNAc(a1-4)GalNAc(a1-4)]GalNAc(a1-4)GalNAc(a1-4)GalNAc(a1-3)Bac2Ac4Ac(b1-"
+        );
+
+        // Accessions are not converted, only found in the table on request.
+        for (accession, from) in [
+            ("G60371D-N", Format::Auto),
+            ("G60371DN", Format::Glycam),
+            ("G50508SG", Format::Auto),
+        ] {
+            assert!(
+                convert(accession, from, Format::Wurcs).is_err(),
+                "{accession}"
+            );
+            assert!(
+                convert_with_table(accession, from, Format::Wurcs, TableMode::Off).is_err(),
+                "{accession}"
+            );
+            let resolved =
+                convert_with_table(accession, from, Format::Wurcs, TableMode::Fallback).unwrap();
+            assert!(resolved.starts_with("WURCS=2.0/8,"), "{accession}");
+        }
+        // G77147GI is not a table record: the structure 0.3.1 gave for it
+        // has four open linkages (that of G92358QN), not that of G77147GI.
+        assert!(
+            convert_with_table(
+                "G77147GI",
+                Format::Glycam,
+                Format::Wurcs,
+                TableMode::Fallback
+            )
+            .is_err()
+        );
+
+        // A check passes when the input reads as its record and fails when
+        // the record holds another structure.
+        let name = "LFucpa1-2DGalpa1-3DGalpb1-3DGalpNAc";
+        assert_eq!(
+            convert_with_table(name, Format::Glycam, Format::Wurcs, TableMode::Check).unwrap(),
+            WURCS
+        );
+        let gs00954 = TABLE_RECORDS_THAT_DISAGREE[4].1;
+        assert!(matches!(
+            convert_with_table(gs00954, Format::Glycam, Format::Wurcs, TableMode::Check),
+            Err(TableConversionError::Disagreement { .. })
+        ));
+        assert!(convert_with_table(gs00954, Format::Glycam, Format::Wurcs, TableMode::Off).is_ok());
+    }
+
+    #[test]
+    fn every_corpus_notation_is_computed_to_its_record_structure() {
+        let records: Vec<_> = corpus_records().collect();
+        assert_eq!(records.len(), 942);
+        let mut disagreements = Vec::new();
+        for record in records {
+            let expected = &corpus_wurcs_normalizations()[record.wurcs];
+            for (notation, format, column) in [
+                (record.iupac, Format::IupacCondensed, "iupac"),
+                (
+                    record.iupac_extended,
+                    Format::IupacExtended,
+                    "iupac_extended",
+                ),
+                (record.glycam, Format::Glycam, "glycam"),
+                (record.smiles, Format::Smiles, "smiles"),
+            ] {
+                if notation.is_empty() {
                     continue;
                 }
-                for (_, to) in values {
-                    let expected = corpus_records()
-                        .filter(|candidate| match from {
-                            Format::Wurcs => candidate.wurcs == input,
-                            Format::IupacCondensed => candidate.iupac == input,
-                            Format::IupacExtended => candidate.iupac_extended == input,
-                            Format::Glycam => candidate.glycam == input,
-                            Format::Smiles => candidate.smiles == input,
-                            Format::Auto => false,
-                        })
-                        .filter_map(|candidate| candidate.notation(to))
-                        .map(|expected| {
-                            if to == Format::Wurcs {
-                                corpus_wurcs_normalizations()[expected].clone()
-                            } else {
-                                expected.to_owned()
-                            }
-                        })
-                        .collect::<Vec<_>>();
-                    if expected.is_empty() {
-                        continue;
-                    }
-                    let explicit = convert(input, from, to).unwrap();
-                    assert!(
-                        expected.contains(&explicit),
-                        "{from:?} -> {to:?}: {input}\noutput: {explicit}\nexpected one of: {expected:?}"
-                    );
-                    let automatic = convert(input, Format::Auto, to).unwrap();
-                    assert!(
-                        expected.contains(&automatic),
-                        "auto({from:?}) -> {to:?}: {input}\noutput: {automatic}\nexpected one of: {expected:?}"
-                    );
+                let computed = parse_notation(notation, format)
+                    .map_err(|error| error.to_string())
+                    .and_then(|graph| core::write_wurcs(&graph).map_err(|e| e.to_string()));
+                if computed.as_ref() != Ok(expected) {
+                    disagreements.push((column, notation, computed, expected.clone()));
                 }
             }
         }
+        for (column, notation, computed, expected) in &disagreements {
+            eprintln!("{column}\t{notation}\n\tcomputed {computed:?}\n\trecord   {expected}");
+        }
+        let found = disagreements
+            .iter()
+            .map(|(column, notation, _, _)| (*column, *notation))
+            .collect::<Vec<_>>();
+        assert_eq!(found, TABLE_RECORDS_THAT_DISAGREE);
     }
 
     const HIGHLIGHT_TARGET: &str = "Neu5Ac(a2-3)Gal(b1-4)[Fuc(a1-3)]GlcNAc(b1-2)Man(a1-3)[Gal(b1-3)[Fuc(a1-4)]GlcNAc(b1-2)Man(a1-6)]Man(b1-4)GlcNAc(b1-4)[Fuc(a1-6)]GlcNAc";

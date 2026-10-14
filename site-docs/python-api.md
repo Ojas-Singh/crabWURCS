@@ -14,7 +14,7 @@
 
 ```python
 crabwurcs.detect_format(value)
-crabwurcs.convert(value, to_format, from_format="auto")
+crabwurcs.convert(value, to_format, from_format="auto", table="off")
 crabwurcs.normalize_wurcs(value)
 crabwurcs.render_snfg(value, from_format="auto", image_format="svg")
 crabwurcs.extract_pdb(contents, format="auto")

@@ -39,6 +39,13 @@ crabwurcs convert --to glycam 'β-D-Galp-(1→4)-D-GlcNAc'
 
 # Convert to IUPAC extended
 crabwurcs convert --to iupac-extended 'WURCS=2.0/...'
+
+# Conversions are computed. The bundled table of GlycoShape notations is
+# used only on request: as a fallback for inputs that cannot be converted
+# (here a GlyTouCan accession stored as a GlycoShape name) ...
+crabwurcs convert --to wurcs --table fallback 'G60371D-N'
+# ... or as a check that the input reads as the structure of its record.
+crabwurcs convert --to wurcs --table check 'LFucpa1-2DGalpa1-3DGalpb1-3DGalpNAc'
 ```
 
 ### SNFG Rendering

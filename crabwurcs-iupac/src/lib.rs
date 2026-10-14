@@ -3,7 +3,7 @@
 use crabwurcs_core::{
     AnomericSymbol, CarbonPosition, Linkage, Modification, Monosaccharide, Probability,
     RepeatCount, ResidueGraph, ResidueKind, RingClosure, UndefinedLinkage, UndefinedParent,
-    classify_residue, residue_from_kind,
+    classify_residue, classify_residue_configuration, residue_from_kind,
 };
 use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
@@ -221,17 +221,8 @@ pub fn parse_iupac_condensed(input: &str) -> IupacResult<ResidueGraph> {
     if cleaned.is_empty() {
         return Err(IupacError::UnsupportedToken("empty input".into()));
     }
-    if let Some(wurcs) = known_accession_wurcs(&cleaned.replace('-', "")) {
-        let mut graph = crabwurcs_core::parse_wurcs(wurcs)?;
-        graph.set_source_iupac(input.trim().to_string());
-        return Ok(graph);
-    }
-    if cleaned == "Galb1-4)Gala1-3(?24-diacetimido-246-trideoxyhexose)" {
-        let mut graph = crabwurcs_core::parse_wurcs(
-            "WURCS=2.0/3,3,2/[uxxxxm_2*NCC/3=O_4*NCC/3=O][a2112h-1a_1-5][a2112h-1b_1-5]/1-2-3/a3-b1_b4-c1",
-        )?;
-        graph.set_source_iupac(input.trim().to_string());
-        return Ok(graph);
+    if let Some(accession) = glytoucan_accession(&cleaned) {
+        return Err(accession_error(&accession, "IUPAC"));
     }
     if let Some(mut graph) = parse_condensed_fragments(&cleaned)? {
         graph.set_source_iupac(input.trim().to_string());
@@ -326,10 +317,33 @@ fn assemble_condensed_tokens(
                     acceptor = Some(donor);
                 } else {
                     graph.set_root(donor);
+                    // `GlcNAc(b1-` declares the reducing-end anomer (and with
+                    // it the ring form) without naming an aglycone.
+                    let declared = pending_linkage.take().filter(|link| {
+                        link.parent_positions.iter().all(|position| position.0 == 0)
+                            && link.map_code.is_none()
+                    });
                     if let Some(root) = graph.residue_mut(donor) {
-                        root.anomeric_symbol = AnomericSymbol::Unknown;
-                        root.anomeric_prefix = unknown_anomeric_prefix(root);
-                        root.anomeric_position = 0;
+                        match declared {
+                            Some(link) => {
+                                root.anomeric_symbol = link.anomer;
+                                let declared_position = link
+                                    .child_positions
+                                    .first()
+                                    .map(|position| position.0)
+                                    .unwrap_or(0);
+                                if declared_position > 0 {
+                                    root.anomeric_position = declared_position;
+                                } else if root.anomeric_position == 0 {
+                                    root.anomeric_position = 1;
+                                }
+                            }
+                            None => {
+                                root.anomeric_symbol = AnomericSymbol::Unknown;
+                                root.anomeric_prefix = unknown_anomeric_prefix(root);
+                                root.anomeric_position = 0;
+                            }
+                        }
                     }
                     acceptor = Some(donor);
                 }
@@ -465,11 +479,13 @@ fn append_residue_graph(
 
 fn parse_condensed_closure(input: &str) -> IupacResult<Option<ResidueGraph>> {
     let repeat = input.starts_with('[') && input.contains("-]");
+    // A cycle opens with its acceptor position(s) (`4)Glc(b1-4)Glc(b1-`).
+    // A trailing `(b1-` alone is the anomer of the reducing end, and a
+    // residue name may itself begin with a digit (`6dAlt`).
     let cyclic = !repeat
-        && input
-            .chars()
-            .next()
-            .is_some_and(|character| character.is_ascii_digit() || character == '?')
+        && regex::Regex::new(r"^[0-9?/|]+\)")
+            .expect("cycle acceptor regex")
+            .is_match(input)
         && input.ends_with('-');
     if !repeat && !cyclic {
         return Ok(None);
@@ -641,6 +657,7 @@ fn tokenize_condensed(input: &str) -> IupacResult<Vec<CondensedToken>> {
             tokens.push(CondensedToken::Residue(std::mem::take(text)));
         }
     };
+    let reducing_end = regex::Regex::new(r"^[abo?αβ][0-9?]+-$").expect("reducing-end anomer regex");
 
     while i < chars.len() {
         match chars[i] {
@@ -657,6 +674,14 @@ fn tokenize_condensed(input: &str) -> IupacResult<Vec<CondensedToken>> {
                     i += 1;
                 }
                 if depth != 0 {
+                    // `GlcNAc(b1-` ends with the reducing-end anomer, whose
+                    // parenthesis stays open because no aglycone follows.
+                    let tail: String = chars[start..].iter().collect();
+                    if reducing_end.is_match(&tail) {
+                        flush_residue(&mut text, &mut tokens);
+                        tokens.push(CondensedToken::Linkage(tail));
+                        break;
+                    }
                     return Err(IupacError::UnsupportedToken(
                         "unclosed linkage parenthesis".into(),
                     ));
@@ -1404,10 +1429,14 @@ fn make_residue_from_name_with_anomeric(
     let is_d = name.starts_with("D-") || name.starts_with("d-");
     let is_l = name.starts_with("L-") || name.starts_with("l-");
 
+    // A ring letter may follow the three-letter stem of a derived name
+    // (`GulpN`, `GlcpNAc`, `Neup5Ac`, `GalfNAc`); read the name without it.
+    let (stem_ring, stem_base) = split_stem_ring(&base);
     let registry_match = (!base.starts_with("Hex2NAc4NAc6d"))
-        .then(|| registry_kind_prefix(&base))
+        .then(|| registry_kind_prefix(&stem_base))
         .flatten();
     if let Some((kind, matched_len)) = registry_match {
+        let base = stem_base;
         let mut residue = if kind.unique_residue().is_some() {
             residue_from_kind(kind).expect("valid static residue registry entry")
         } else {
@@ -1434,6 +1463,9 @@ fn make_residue_from_name_with_anomeric(
             .map(char::len_utf8)
             .unwrap_or(0);
         apply_ring_suffix(&mut residue, &base[..matched_len + ring_suffix_len]);
+        if let Some(ring) = stem_ring {
+            apply_ring_suffix(&mut residue, ring.encode_utf8(&mut [0; 4]));
+        }
         if let Some(symbol) = anomeric_override {
             residue.anomeric_symbol = symbol;
             if residue.anomeric_prefix.starts_with('h') {
@@ -1448,6 +1480,19 @@ fn make_residue_from_name_with_anomeric(
         // (notably Bac[2Ac,4Ac]) retain their N-acetyl rather than being
         // mistaken for ordinary O-acetyl groups.
         merge_extra_modifications(&mut residue, &base);
+        // The kind hint names the registry entry the text started from.
+        // Once the name adds substituents (`GalfNAc`) or the configuration is
+        // inverted, the residue is named by its chemistry instead.
+        if residue
+            .residue_kind
+            .is_some_and(|kind| kind.unique_residue().is_some())
+        {
+            let mut probe = residue.clone();
+            probe.residue_kind = None;
+            if let Some(kind) = classify_residue(&probe) {
+                residue.residue_kind = Some(kind);
+            }
+        }
         return residue;
     }
 
@@ -1561,6 +1606,27 @@ fn make_residue_from_name_with_anomeric(
     }
 }
 
+/// Split a ring letter that follows a three-letter stem out of a residue
+/// name: `GulpN` → (`p`, `GulN`), `Galf` → (`f`, `Gal`). Names without one
+/// are returned unchanged.
+fn split_stem_ring(name: &str) -> (Option<char>, String) {
+    let bytes = name.as_bytes();
+    if bytes.len() >= 4
+        && bytes[0].is_ascii_uppercase()
+        && bytes[1].is_ascii_lowercase()
+        && bytes[2].is_ascii_lowercase()
+        && matches!(bytes[3], b'p' | b'f')
+        && bytes.get(4).is_none_or(|next| !next.is_ascii_lowercase())
+    {
+        (
+            Some(bytes[3] as char),
+            format!("{}{}", &name[..3], &name[4..]),
+        )
+    } else {
+        (None, name.to_string())
+    }
+}
+
 fn registry_kind_prefix(name: &str) -> Option<(ResidueKind, usize)> {
     let mut candidates = Vec::new();
     for kind in ResidueKind::ALL {
@@ -1582,26 +1648,11 @@ fn registry_kind_prefix(name: &str) -> Option<(ResidueKind, usize)> {
     })
 }
 
+/// The default absolute configuration of a residue name is the one of its
+/// registry UniqueRES (SNFG: L for Ara, Fuc, Ido, IdoA, Rha, Alt, AltA, Sor
+/// and Api and the names derived from them, D for the others).
 fn default_is_l(kind: ResidueKind) -> bool {
-    matches!(
-        kind,
-        ResidueKind::Ara
-            | ResidueKind::Fuc
-            | ResidueKind::FucNAc
-            | ResidueKind::Ido
-            | ResidueKind::IdoA
-            | ResidueKind::IdoN
-            | ResidueKind::IdoNAc
-            | ResidueKind::Rha
-            | ResidueKind::RhaNAc
-            | ResidueKind::Alt
-            | ResidueKind::AltA
-            | ResidueKind::AltN
-            | ResidueKind::AltNAc
-            | ResidueKind::Sor
-            | ResidueKind::Api
-            | ResidueKind::Col
-    )
+    kind.default_configuration() == Some('L')
 }
 
 fn apply_explicit_configuration(
@@ -1642,14 +1693,19 @@ fn merge_extra_modifications(residue: &mut Monosaccharide, name: &str) {
         return;
     }
     let extra = extract_name_modifications(name);
-    for modification in extra {
+    for mut modification in extra {
         if let Some(existing) = residue.modifications.iter_mut().find(|existing| {
             existing.position == modification.position
                 && existing.descriptor == "N"
-                && modification.descriptor.starts_with("NCC")
+                && (modification.descriptor.starts_with("NCC")
+                    || modification.descriptor == "OCC/3=O")
         }) {
-            // Bacillosamine's UniqueRES uses bare N at positions 2/4.  An
-            // explicit Ac suffix changes that amino substituent to N-acetyl.
+            // Bacillosamine's UniqueRES uses bare N at positions 2/4 (as do
+            // Pse, Leg and Neu at 5/7).  An explicit Ac suffix at an amino
+            // position acetylates that nitrogen: it is an N-acetyl group.
+            if modification.descriptor == "OCC/3=O" {
+                modification.descriptor = "NCC/3=O".into();
+            }
             *existing = modification;
         } else if !residue.modifications.iter().any(|existing| {
             existing.position == modification.position
@@ -1748,19 +1804,30 @@ fn extract_name_modifications(name: &str) -> Vec<Modification> {
     let name_lower = name.to_lowercase();
     let base_lower = strip_common_prefixes(name).to_lowercase();
 
-    if name_lower.contains("nac") || name_lower.contains("nacetyl") {
+    // `NAc` after a position number is an extra acetamido group at that
+    // carbon (`dHexNAc4NAc`); a bare `NAc` is the 2-acetamido of the name.
+    let positional_nac =
+        regex::Regex::new(r"([0-9]+)(?:\(([^)]+)\))?NAc").expect("positional N-acetyl regex");
+    let bare_nac = regex::Regex::new(r"(?i)(?:^|[^0-9)])nac").expect("N-acetyl regex");
+    if bare_nac.is_match(name) || name_lower.contains("nacetyl") {
         mods.push(Modification {
             position: CarbonPosition(2),
             descriptor: "NCC/3=O".into(),
             probability: None,
         });
     }
-    if name_lower.contains("hex2nac4nac6d") {
-        mods.push(Modification {
-            position: CarbonPosition(4),
-            descriptor: "NCC/3=O".into(),
-            probability: None,
-        });
+    for captures in positional_nac.captures_iter(name) {
+        if let Ok(position) = captures[1].parse::<u8>()
+            && position > 0
+        {
+            mods.push(Modification {
+                position: CarbonPosition(position),
+                descriptor: "NCC/3=O".into(),
+                probability: captures
+                    .get(2)
+                    .and_then(|value| parse_substituent_probability(value.as_str())),
+            });
+        }
     }
     if name_lower.contains("ngc") || name_lower.contains("nglycolyl") {
         mods.push(Modification {
@@ -1981,8 +2048,8 @@ fn write_iupac_condensed_impl(graph: &ResidueGraph, preserve_source: bool) -> Iu
         .inner()
         .node_weights()
         .flat_map(|residue| {
-            let registry_modifications = classify_residue(residue)
-                .and_then(|kind| residue_from_kind(kind).ok())
+            let registry_modifications = classify_residue_configuration(residue)
+                .and_then(|(kind, _)| residue_from_kind(kind).ok())
                 .map(|template| template.modifications)
                 .unwrap_or_default();
             residue.modifications.iter().filter(move |modification| {
@@ -2015,9 +2082,10 @@ fn write_iupac_condensed_impl(graph: &ResidueGraph, preserve_source: bool) -> Iu
         .root()
         .unwrap_or_else(|| petgraph::graph::NodeIndex::from(0u32));
 
+    let reducing_end = reducing_end_suffix(inner, root);
     if inner.node_count() == 1 {
         if let Some(res) = inner.node_weight(root) {
-            return Ok(residue_to_iupac_name(res));
+            return Ok(format!("{}{reducing_end}", residue_to_iupac_name(res)));
         }
         return Ok(String::new());
     }
@@ -2032,6 +2100,7 @@ fn write_iupac_condensed_impl(graph: &ResidueGraph, preserve_source: bool) -> Iu
         }
     }
     let mut result = serialize_iupac_tree_with_labels(inner, root, &anchor_labels);
+    result.push_str(&reducing_end);
     for (index, undefined) in graph.undefined_linkages().iter().enumerate().rev() {
         let fragment = serialize_iupac_tree(inner, undefined.child);
         let residue = inner.node_weight(undefined.child);
@@ -2094,6 +2163,35 @@ fn write_iupac_condensed_impl(graph: &ResidueGraph, preserve_source: bool) -> Iu
         };
     }
     Ok(result)
+}
+
+/// `(a1-`, `(b2-` or `(?1-` when the reducing end is a ring form whose
+/// anomeric carbon WURCS declares (`a2122h-1a_1-5`); empty for an open or
+/// unspecified reducing end (`u2122h`) and for the closing residue of a
+/// repeat or cycle, whose anomer belongs to the closing linkage.
+fn reducing_end_suffix(
+    inner: &petgraph::graph::Graph<Monosaccharide, Linkage>,
+    root: petgraph::graph::NodeIndex,
+) -> String {
+    if inner
+        .edges_directed(root, petgraph::Direction::Incoming)
+        .any(|edge| edge.weight().repeat.is_some() || edge.weight().cyclic)
+    {
+        return String::new();
+    }
+    let Some(residue) = inner.node_weight(root) else {
+        return String::new();
+    };
+    if residue.anomeric_position == 0 || residue.display_name.is_some() {
+        return String::new();
+    }
+    let anomer = match residue.anomeric_symbol {
+        AnomericSymbol::Alpha => 'a',
+        AnomericSymbol::Beta => 'b',
+        AnomericSymbol::Unknown => '?',
+        AnomericSymbol::OpenChain => return String::new(),
+    };
+    format!("({anomer}{}-", residue.anomeric_position)
 }
 
 fn iupac_modification_is_representable(descriptor: &str) -> bool {
@@ -2209,10 +2307,152 @@ fn display_position(position: CarbonPosition) -> String {
     }
 }
 
+/// IUPAC condensed name of one residue.
+///
+/// Registry residues are named by their SNFG name, with `D-`/`L-` when the
+/// absolute configuration differs from the name's default (`D-Fuc`, `L-Man`,
+/// `D-Araf`) and the ring letter when the ring differs from the default
+/// pyranose (`Araf`, `Galf`, `Fruf`). Substituents that are not part of the
+/// name follow it (`Neu5Ac9Ac`, `GlcNAc6PCho`, `Bac2Ac4Ac`, `dHexNAc4NAc`).
 fn residue_to_iupac_name(residue: &Monosaccharide) -> String {
     if let Some(name) = residue.display_name.as_deref() {
         return name.to_string();
     }
+    match classify_residue_configuration(residue) {
+        Some((kind, inverted)) if kind.unique_residue().is_some() => {
+            registry_residue_name(residue, kind, inverted)
+        }
+        _ => legacy_residue_name(residue),
+    }
+}
+
+/// Whether `actual` is the modification the registry entry's own name
+/// carries at that position (the `NAc` of GlcNAc, the `N` of GlcN).
+fn is_named_modification(required: &Modification, actual: &Modification) -> bool {
+    if required.position != actual.position {
+        return false;
+    }
+    if required.descriptor.starts_with("NCCO") {
+        return actual.descriptor.starts_with("NCCO");
+    }
+    if required.descriptor.starts_with("NCC") {
+        return actual.descriptor.starts_with("NCC") && !actual.descriptor.starts_with("NCCO");
+    }
+    required.descriptor == actual.descriptor
+}
+
+/// Byte offset at which a ring letter belongs in a residue name: after a
+/// three-letter stem (`Gal|f`, `Gal|fNAc`, `Neu|p5Ac`), else at the end.
+fn ring_letter_offset(name: &str) -> usize {
+    let bytes = name.as_bytes();
+    let has_stem = bytes.len() >= 3
+        && bytes[0].is_ascii_uppercase()
+        && bytes[1].is_ascii_lowercase()
+        && bytes[2].is_ascii_lowercase();
+    if has_stem && (bytes.len() == 3 || !bytes[3].is_ascii_lowercase()) {
+        3
+    } else {
+        name.len()
+    }
+}
+
+fn registry_residue_name(residue: &Monosaccharide, kind: ResidueKind, inverted: bool) -> String {
+    let template = residue_from_kind(kind)
+        .map(|template| template.modifications)
+        .unwrap_or_default();
+    let mut name = kind.canonical_name().to_string();
+
+    // The registry identifies an N-sulfated hexosamine as its underlying
+    // HexN family. Preserve the chemically specific `NS` suffix in text
+    // notations instead of degrading GlcNS to GlcN.
+    let named_n_sulfate = name.ends_with('N')
+        && residue.modifications.iter().any(|modification| {
+            modification.descriptor.contains("NSO")
+                && template.iter().any(|required| {
+                    required.position == modification.position && required.descriptor == "N"
+                })
+        });
+    if named_n_sulfate {
+        name.push('S');
+    }
+
+    let ring = match (residue.ring, kind.default_is_furanose()) {
+        (RingClosure::Furanose, Some(false)) => Some('f'),
+        (RingClosure::Pyranose, Some(true)) => Some('p'),
+        _ => None,
+    };
+    if let Some(ring) = ring {
+        name.insert(ring_letter_offset(&name), ring);
+    }
+
+    for modification in &residue.modifications {
+        if template
+            .iter()
+            .any(|required| is_named_modification(required, modification))
+            || (named_n_sulfate && modification.descriptor.contains("NSO"))
+        {
+            continue;
+        }
+        // An acyl group on one of the name's own amino groups is written
+        // without the N (Bac2Ac4Ac, Pse5Ac7Ac); any other N-acetyl is an extra
+        // acetamido group (dHexNAc4NAc).
+        let on_named_amine = template.iter().any(|required| {
+            required.position == modification.position && required.descriptor == "N"
+        });
+        let substituent = if on_named_amine && modification.descriptor.starts_with("NCCO") {
+            Some("Gc")
+        } else if on_named_amine && modification.descriptor.starts_with("NCC") {
+            Some("Ac")
+        } else if modification.descriptor == "NCC/3=O" {
+            Some("NAc")
+        } else if modification.descriptor == "OC" {
+            Some("Me")
+        } else if modification.descriptor == "OCC/3=O" {
+            Some("Ac")
+        } else if modification.descriptor.contains("OSO") {
+            Some("S")
+        } else if modification.descriptor.contains("P^XOCCNC") {
+            Some("PCho")
+        } else {
+            None
+        };
+        if let Some(substituent) = substituent {
+            push_substituent(&mut name, modification, substituent);
+        }
+    }
+
+    if inverted && let Some(default) = kind.default_configuration() {
+        let configuration = if default == 'L' { "D-" } else { "L-" };
+        name.insert_str(0, configuration);
+    }
+    name
+}
+
+fn push_substituent(name: &mut String, modification: &Modification, substituent: &str) {
+    name.push_str(&modification.position.0.to_string());
+    if let Some(probability) = modification.probability {
+        let annotation = probability.to_iupac_percent();
+        let annotation = annotation
+            .split(',')
+            .map(|part| {
+                if part.ends_with('%') {
+                    part.to_string()
+                } else {
+                    format!("{part}%")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        name.push('(');
+        name.push_str(&annotation);
+        name.push(')');
+    }
+    name.push_str(substituent);
+}
+
+/// Names residues that are neither a registry entry nor the enantiomer of
+/// one (kept from earlier releases for uncommon skeletons).
+fn legacy_residue_name(residue: &Monosaccharide) -> String {
     let skeleton = &residue.skeleton_code;
     let bare = skeleton
         .strip_suffix(['h', 'm', 'x', 'a', 'd'])
@@ -2671,61 +2911,161 @@ fn normalize_extended_residue(name: &str) -> String {
     result
 }
 
-fn residue_stereo_and_name(name: &str) -> (&str, &str) {
-    if let Some(rest) = name.strip_prefix("D-") {
-        ("D", rest)
-    } else if let Some(rest) = name.strip_prefix("L-") {
-        ("L", rest)
-    } else if let Some((kind, _)) = registry_kind_prefix(name) {
-        if kind.is_generic() {
-            ("", name)
-        } else if default_is_l(kind) {
-            ("L", name)
+/// One IUPAC condensed residue name taken apart: `D-Araf` is configuration
+/// `D`, core `Ara`, ring `f`; `Neu5Ac9Ac` is core `Neu5Ac`, substituents
+/// `9Ac`; `GlcNS6S` is core `GlcNS`, substituents `6S`.
+struct ResidueText {
+    configuration: Option<char>,
+    core: String,
+    ring: Option<char>,
+    substituents: String,
+    /// Registry entry of the core, when the core is one.
+    kind: Option<ResidueKind>,
+    /// Registry entry the core's three-letter stem belongs to (`Glc` for
+    /// `GlcNS`), used for the default configuration of unregistered cores.
+    family: Option<ResidueKind>,
+}
+
+impl ResidueText {
+    fn parse(name: &str) -> Self {
+        let (configuration, rest) = if let Some(rest) = name.strip_prefix("D-") {
+            (Some('D'), rest)
+        } else if let Some(rest) = name.strip_prefix("L-") {
+            (Some('L'), rest)
         } else {
-            ("D", name)
+            (None, name)
+        };
+        // A ring letter after a three-letter stem: `Galf`, `Neup5Ac`, `GalfNAc`.
+        let (mut ring, text) = split_stem_ring(rest);
+        let substituent = regex::Regex::new(r"^[0-9]+(?:\([^)]*\))?(?:PCho|NAc|Ac|Me|S)")
+            .expect("substituent regex");
+        let (kind, mut core, mut remainder) = match registry_kind_prefix(&text) {
+            Some((kind, length)) => (
+                Some(kind),
+                text[..length].to_string(),
+                text[length..].to_string(),
+            ),
+            None => {
+                // Unregistered core (`GlcNS`): it ends where the first
+                // numbered substituent begins.
+                let split = (0..=text.len())
+                    .filter(|index| text.is_char_boundary(*index))
+                    .find(|index| {
+                        *index > 0
+                            && (*index == text.len() || substituent.is_match(&text[*index..]))
+                    })
+                    .unwrap_or(text.len());
+                (None, text[..split].to_string(), text[split..].to_string())
+            }
+        };
+        if ring.is_none()
+            && let Some(letter) = remainder.chars().next().filter(|c| matches!(c, 'p' | 'f'))
+        {
+            ring = Some(letter);
+            remainder.remove(0);
         }
-    } else {
-        ("", name)
+        // `GlcNS` is the hexosamine with its N-sulfate, not GlcN + O-sulfate.
+        if kind.is_some_and(|kind| kind.canonical_name().ends_with('N'))
+            && remainder.starts_with('S')
+            && !remainder.starts_with("S,")
+        {
+            core.push('S');
+            remainder.remove(0);
+        }
+        let family = kind.or_else(|| {
+            text.get(..3)
+                .and_then(registry_kind_prefix)
+                .map(|(kind, _)| kind)
+        });
+        Self {
+            configuration,
+            core,
+            ring,
+            substituents: remainder,
+            kind,
+            family,
+        }
+    }
+
+    fn is_generic(&self) -> bool {
+        self.kind.is_some_and(ResidueKind::is_generic)
+    }
+
+    /// Written configuration letter: the explicit one, else the default of
+    /// the residue name; none for generic or unknown names.
+    fn configuration_letter(&self) -> Option<char> {
+        if self.is_generic() {
+            return None;
+        }
+        self.configuration
+            .or_else(|| self.family.and_then(ResidueKind::default_configuration))
+    }
+
+    /// Core with its ring letter (the name's default ring unless stated,
+    /// pyranose for all but Api): `Galf`, `GlcpNAc`, `Apif`.
+    fn core_with_ring(&self) -> String {
+        let mut core = self.core.clone();
+        if !self.is_generic() {
+            let default = match self.kind.and_then(ResidueKind::default_is_furanose) {
+                Some(true) => 'f',
+                _ => 'p',
+            };
+            core.insert(ring_letter_offset(&core), self.ring.unwrap_or(default));
+        }
+        core
     }
 }
 
 fn extended_residue_name(name: &str) -> String {
-    if registry_kind_prefix(name).is_some_and(|(kind, _)| kind.is_generic()) {
+    let text = ResidueText::parse(name);
+    if text.kind.is_none() && text.family.is_none() {
         return name.to_string();
     }
-    if let Some(rest) = name.strip_prefix("Neu") {
-        return format!("Neup{}", rest);
-    }
-    if let Some(rest) = name.strip_prefix("Glc") {
-        return format!("Glcp{}", rest);
-    }
-    if let Some(rest) = name.strip_prefix("Gal") {
-        return format!("Galp{}", rest);
-    }
-    if let Some(rest) = name.strip_prefix("Man") {
-        return format!("Manp{}", rest);
-    }
-    if let Some(rest) = name.strip_prefix("IdoA") {
-        return format!("IdopA{}", rest);
-    }
-    if name.ends_with('f') {
-        name.to_string()
-    } else {
-        format!("{}p", name)
-    }
+    format!("{}{}", text.core_with_ring(), text.substituents)
 }
 
 fn extended_name_with_stereo(name: &str) -> String {
-    if registry_kind_prefix(name).is_none() {
+    let text = ResidueText::parse(name);
+    if text.kind.is_none() && text.family.is_none() {
         return name.to_string();
     }
-    let (stereo, name) = residue_stereo_and_name(name);
-    let extended = extended_residue_name(name);
-    if stereo.is_empty() {
-        extended
-    } else {
-        format!("{stereo}-{extended}")
+    let extended = format!("{}{}", text.core_with_ring(), text.substituents);
+    match text.configuration_letter() {
+        Some(letter) => format!("{letter}-{extended}"),
+        None => extended,
     }
+}
+
+/// IUPAC substituent suffix (`9Ac`, `2Me3Me`, `6PCho`) as a GLYCAM list
+/// (`[9A]`, `[2Me,3Me]`, `[6PC]`). Bacillosamine keeps `Ac` for its
+/// N-acetyl groups (`DBacp[2Ac,4Ac]`). Suffixes GLYCAM has no code for are
+/// kept as written so that reading them back fails instead of losing them.
+fn glycam_substituent_list(substituents: &str, kind: Option<ResidueKind>) -> String {
+    if substituents.is_empty() {
+        return String::new();
+    }
+    let token = regex::Regex::new(r"(?P<position>[0-9]+)(?P<code>PCho|NAc|Ac|Me|S)")
+        .expect("substituent token regex");
+    let mut items = Vec::new();
+    let mut consumed = 0;
+    for captures in token.captures_iter(substituents) {
+        let whole = captures.get(0).expect("match");
+        if whole.start() != consumed {
+            return format!("[{substituents}]");
+        }
+        consumed = whole.end();
+        let code = match &captures["code"] {
+            "Ac" if kind == Some(ResidueKind::Bac) => "Ac",
+            "Ac" => "A",
+            "PCho" => "PC",
+            other => other,
+        };
+        items.push(format!("{}{code}", &captures["position"]));
+    }
+    if consumed != substituents.len() {
+        return format!("[{substituents}]");
+    }
+    format!("[{}]", items.join(","))
 }
 
 const GLYCAM_TO_COMMON: &[(&str, &str)] = &[
@@ -2757,24 +3097,74 @@ fn glycam_to_common(name: &str) -> &str {
     name
 }
 
+/// GlycoShape's GLYCAM spelling of the 2,4-diacetamido-2,4,6-trideoxyhexose
+/// whose stereochemistry is not specified (WURCS `xxxxm_2*NCC/3=O_4*NCC/3=O`).
+/// GLYCAM itself has no residue for it; the spelling is read and written so
+/// that the GlycoShape name of this residue survives a round trip.
+const GLYCOSHAPE_DIACETAMIDO_TRIDEOXYHEXOSE: &str = "[2,4-diacetimido-2,4,6-trideoxyhexose]";
+
+/// A GlyTouCan accession (`G` + five digits + two letters, also written with
+/// a hyphen as `G60371D-N`) is a database identifier, not a notation.
+fn glytoucan_accession(value: &str) -> Option<String> {
+    let compact = value.replace('-', "");
+    let accession = regex::Regex::new(r"^G[0-9]{5}[A-Z]{2}$").expect("accession regex");
+    accession.is_match(&compact).then_some(compact)
+}
+
+fn accession_error(accession: &str, format: &str) -> IupacError {
+    IupacError::UnsupportedToken(format!(
+        "{accession} is a GlyTouCan accession, not a {format} sequence; crabWURCS does not look accessions up"
+    ))
+}
+
+/// Translate one GLYCAM substituent list (the text inside `[...]` after a
+/// residue, for example `9A`, `2Me,3Me`, `6PC` or `2Ac,4Ac`) into the IUPAC
+/// condensed suffix read by [`extract_name_modifications`]. Unknown codes are
+/// an error: a substituent must never be dropped silently.
+fn glycam_substituents_to_iupac(list: &str) -> IupacResult<String> {
+    let code = regex::Regex::new(r"^(?P<position>[0-9]+)(?P<code>A|Ac|Me|S|PC)$")
+        .expect("GLYCAM substituent regex");
+    let mut suffix = String::new();
+    for item in list.split(',') {
+        let captures = code.captures(item.trim()).ok_or_else(|| {
+            IupacError::UnsupportedToken(format!("unsupported GLYCAM substituent [{list}]"))
+        })?;
+        suffix.push_str(&captures["position"]);
+        suffix.push_str(match &captures["code"] {
+            "A" | "Ac" => "Ac",
+            "Me" => "Me",
+            "S" => "S",
+            "PC" => "PCho",
+            _ => unreachable!("checked by the regex"),
+        });
+    }
+    Ok(suffix)
+}
+
+/// Check every substituent list of a GLYCAM sequence before it is rewritten.
+/// Branch brackets always hold a linkage (`-`); substituent lists never do.
+fn validate_glycam_substituents(sequence: &str) -> IupacResult<()> {
+    let bracket = regex::Regex::new(r"\[([^\[\]]*)\]").expect("GLYCAM bracket regex");
+    for captures in bracket.captures_iter(sequence) {
+        let content = &captures[1];
+        if !content.contains('-') {
+            glycam_substituents_to_iupac(content)?;
+        }
+    }
+    Ok(())
+}
+
 pub fn parse_glycam(input: &str) -> IupacResult<ResidueGraph> {
     let mut cleaned = input.replace(' ', "");
     if cleaned.is_empty() {
         return Err(IupacError::UnsupportedToken("empty input".into()));
     }
-    if let Some(wurcs) = known_accession_wurcs(&cleaned) {
-        let mut graph = crabwurcs_core::parse_wurcs(wurcs)?;
-        graph.set_source_glycam(input.trim().to_string());
-        return Ok(graph);
-    }
     if let Some(mut graph) = parse_composition_notation(&cleaned, normalize_glycam_residue)? {
         graph.set_source_glycam(input.trim().to_string());
         return Ok(graph);
     }
-    // GLYCAM occasionally stores database sequence identifiers instead of a
-    // literal sequence.  Resolve the identifiers present in the bundled
-    // GlycoShape corpus; callers should prefer literal GLYCAM for portability.
-    cleaned = cleaned.replace("[2,4-diacetimido-2,4,6-trideoxyhexose]", "DHex2NAc4NAc6d");
+    cleaned = cleaned.replace(GLYCOSHAPE_DIACETAMIDO_TRIDEOXYHEXOSE, "DHex2NAc4NAc6d");
+    validate_glycam_substituents(&cleaned)?;
     // GlycoShape uses `aNone-OH`/`bNone-OH` when its source record omitted
     // the reducing-end carbon number. Accept that spelling and infer the
     // conventional anomeric carbon from the parsed residue below.
@@ -2799,15 +3189,10 @@ pub fn parse_glycam(input: &str) -> IupacResult<ResidueGraph> {
     if let Some((start, _, _, _)) = reducing_end {
         cleaned.truncate(start);
     }
-    let cleaned = match cleaned.as_str() {
-        "G50508SG" => {
-            "DNeup5Aca2-3[DGalpNAcb1-4]DGalpb1-4DGlcpNAcb1-2[DNeup5Aca2-3[DGalpNAcb1-4]DGalpb1-4DGlcpNAcb1-4]DManpa1-3[DNeup5Aca2-3[DGalpNAcb1-4]DGalpb1-4DGlcpNAcb1-2[DNeup5Aca2-3[DGalpNAcb1-4]DGalpb1-4DGlcpNAcb1-6]DManpa1-6]DManpb1-4DGlcpNAcb1-4[LFucpa1-6]DGlcpNAc"
-        }
-        "G77147GI" => {
-            "DNeup5Gca2-3/6DGalpb1-3/4DGlcpNAcb1-2DManpa1-3/6[DManpa1-3[DManpa1-6]DManpa1-3/6]DManpb1-4DGlcpNAcb1-4DGlcpNAc"
-        }
-        _ => cleaned.as_str(),
-    };
+    if let Some(accession) = glytoucan_accession(&cleaned) {
+        return Err(accession_error(&accession, "GLYCAM"));
+    }
+    let cleaned = cleaned.as_str();
     let bridge_linked = regex::Regex::new(
         r"(?P<name>[DL]?[A-Z0-9][A-Za-z0-9-]*?(?:\[[0-9A-Za-z,]+\])?)(?P<anom>[ab?])(?P<donor>[0-9?]+)-(?P<bridge>[0-9?]*(?:Anhydro|\(S\)Py|\(R\)Py|PPEtn|PEtn|PyrP|Tri-P|Suc|NS|SH|Py|P|S|N)[0-9?]*)-(?P<acceptor>[0-9?/]+)",
     ).expect("GLYCAM bridge linkage regex");
@@ -2874,13 +3259,18 @@ pub fn parse_glycam(input: &str) -> IupacResult<ResidueGraph> {
     Ok(graph)
 }
 
-fn known_accession_wurcs(value: &str) -> Option<&'static str> {
-    match value {
-        "G60371DN" => Some(
-            "WURCS=2.0/8,23,22/[u2122h_2*NCC/3=O][a2122h-1b_1-5_2*NCC/3=O][a1122h-1b_1-5][a1122h-1a_1-5][a2112h-1b_1-5][Aad21122h-2a_2-6_5*NCC/3=O][a2112h-1b_1-5_2*NCC/3=O][a1221m-1a_1-5]/1-2-3-4-2-5-6-7-2-5-6-7-2-4-2-5-6-7-2-5-6-7-8/a4-b1_a6-w1_b4-c1_c3-d1_c4-m1_c6-n1_d2-e1_d4-i1_e4-f1_f3-g2_f4-h1_i4-j1_j3-k2_j4-l1_n2-o1_n6-s1_o4-p1_p3-q2_p4-r1_s4-t1_t3-u2_t4-v1",
-        ),
-        _ => None,
-    }
+/// The stereo-unspecified 2,4-diacetamido-2,4,6-trideoxyhexose, which
+/// GlycoShape's GLYCAM names spell [`GLYCOSHAPE_DIACETAMIDO_TRIDEOXYHEXOSE`].
+fn is_glycoshape_diacetamido_trideoxyhexose(residue: &Monosaccharide) -> bool {
+    let mut modifications = residue
+        .modifications
+        .iter()
+        .map(|modification| (modification.position.0, modification.descriptor.as_str()))
+        .collect::<Vec<_>>();
+    modifications.sort_unstable();
+    residue.skeleton_code == "xxxxm"
+        && !residue.anomeric_prefix.starts_with(['A', 'h'])
+        && modifications == [(2, "NCC/3=O"), (4, "NCC/3=O")]
 }
 
 pub fn write_glycam(graph: &ResidueGraph) -> IupacResult<String> {
@@ -2889,10 +3279,10 @@ pub fn write_glycam(graph: &ResidueGraph) -> IupacResult<String> {
         .node_weights()
         .find(|residue| residue.display_name.is_some())
         .or_else(|| {
-            graph
-                .inner()
-                .node_weights()
-                .find(|residue| classify_residue(residue).is_some_and(ResidueKind::is_generic))
+            graph.inner().node_weights().find(|residue| {
+                classify_residue(residue).is_some_and(ResidueKind::is_generic)
+                    && !is_glycoshape_diacetamido_trideoxyhexose(residue)
+            })
         });
     if let Some(residue) = unrepresentable {
         let name = residue
@@ -2913,7 +3303,24 @@ pub fn write_glycam(graph: &ResidueGraph) -> IupacResult<String> {
             glycam_residue_name(&residue_to_iupac_name(residue))
         }));
     }
-    let condensed = write_iupac_condensed(graph)?;
+    let mut condensed = write_iupac_condensed(graph)?;
+    // The reducing-end anomer (`GlcNAc(b1-`) is GLYCAM's `DGlcpNAcb1-OH`.
+    let closure = regex::Regex::new(r"^\[?[0-9?/|]+\)").expect("closure prefix regex");
+    let mut reducing_end = String::new();
+    if !closure.is_match(&condensed)
+        && let Some(captures) = regex::Regex::new(r"\((?P<anom>[abx?])(?P<donor>[0-9?]+)-$")
+            .expect("reducing-end anomer regex")
+            .captures(&condensed)
+    {
+        let anomer = match &captures["anom"] {
+            "a" => "a",
+            "b" => "b",
+            _ => "?",
+        };
+        reducing_end = format!("{anomer}{}-OH", &captures["donor"]);
+        let start = captures.get(0).expect("match").start();
+        condensed.truncate(start);
+    }
     let bridge_linked = regex::Regex::new(
         r"(?P<name>(?:[DL]-)?[A-Za-z0-9][A-Za-z0-9,-]*)\((?P<anom>[abx?])(?P<donor>[0-9?/]+)-(?P<bridge>[0-9?]*(?:Anhydro|\(S\)Py|\(R\)Py|PPEtn|PEtn|PyrP|Tri-P|Suc|NS|SH|Py|P|S|N)[0-9?]*)-(?P<acceptor>[0-9?/]+)\)",
     ).expect("condensed bridge to GLYCAM regex");
@@ -2950,7 +3357,7 @@ pub fn write_glycam(graph: &ResidueGraph) -> IupacResult<String> {
             )
         })
         .to_string();
-    Ok(glycam)
+    Ok(format!("{glycam}{reducing_end}"))
 }
 
 fn normalize_glycam_residue(value: &str) -> String {
@@ -2966,7 +3373,10 @@ fn normalize_glycam_residue(value: &str) -> String {
     if let Some(start) = name.find('[')
         && let Some(end) = name.rfind(']')
     {
-        suffix = name[start + 1..end].replace(',', "");
+        // Lists were validated by `validate_glycam_substituents`; GLYCAM
+        // codes (`9A`, `6PC`, `2Me,3Me`) become IUPAC suffixes (`9Ac`, ...).
+        suffix = glycam_substituents_to_iupac(&name[start + 1..end])
+            .unwrap_or_else(|_| name[start + 1..end].replace(',', ""));
         name.truncate(start);
     }
     for (from, to) in [
@@ -2996,21 +3406,27 @@ fn normalize_glycam_residue(value: &str) -> String {
     }
 }
 
+/// GLYCAM residue for one IUPAC condensed residue name: configuration
+/// letter, ring letter and a bracketed substituent list
+/// (`Neu5Ac9Ac` → `DNeup5Ac[9A]`, `D-Araf` → `DAraf`, `Rha2Me3Me` →
+/// `LRhap[2Me,3Me]`).
 fn glycam_residue_name(value: &str) -> String {
-    let (stereo, name) = residue_stereo_and_name(value);
-    let modifier_re =
-        regex::Regex::new(r"(?P<mods>(?:[0-9]+(?:S|Me))+)$").expect("residue modification regex");
-    let (base, modifiers) = if let Some(caps) = modifier_re.captures(name) {
-        let matched = caps.name("mods").unwrap();
-        (&name[..matched.start()], Some(matched.as_str()))
-    } else {
-        (name, None)
-    };
-    let ring_name = extended_residue_name(base);
-    let modifiers = modifiers
-        .map(|mods| format!("[{}]", mods))
+    let text = ResidueText::parse(value);
+    if text.kind == Some(ResidueKind::DHexNAc) && text.substituents == "4NAc" {
+        return GLYCOSHAPE_DIACETAMIDO_TRIDEOXYHEXOSE.to_string();
+    }
+    if text.kind.is_none() && text.family.is_none() {
+        return value.to_string();
+    }
+    let configuration = text
+        .configuration_letter()
+        .map(String::from)
         .unwrap_or_default();
-    format!("{}{}{}", stereo, ring_name, modifiers)
+    format!(
+        "{configuration}{}{}",
+        text.core_with_ring(),
+        glycam_substituent_list(&text.substituents, text.kind)
+    )
 }
 
 fn parse_iupac_like(input: &str, _is_glycam: bool) -> IupacResult<ResidueGraph> {
@@ -3257,9 +3673,19 @@ mod tests {
         let bac = parse_glycam("DBacp[2Ac,4Ac]").unwrap();
         assert_eq!(write_iupac_condensed(&bac).unwrap(), "Bac2Ac4Ac");
 
-        let accession = parse_iupac_condensed("G60371D-N").unwrap();
-        assert_eq!(accession.node_count(), 23);
-        assert_eq!(accession.edge_count(), 22);
+        // Accessions are identifiers, not notations: they are not resolved.
+        for accession in ["G60371D-N", "G60371DN"] {
+            assert!(matches!(
+                parse_iupac_condensed(accession),
+                Err(IupacError::UnsupportedToken(message)) if message.contains("GlyTouCan accession")
+            ));
+        }
+        for accession in ["G50508SG", "G77147GI", "G60371DNaNone-OH"] {
+            assert!(matches!(
+                parse_glycam(accession),
+                Err(IupacError::UnsupportedToken(message)) if message.contains("GlyTouCan accession")
+            ));
+        }
     }
 
     #[test]
@@ -3274,7 +3700,10 @@ mod tests {
             ("aNone-OH", AnomericSymbol::Alpha),
             ("bNone-OH", AnomericSymbol::Beta),
         ] {
-            let graph = parse_glycam(&format!("G50508SG{suffix}")).unwrap();
+            let graph = parse_glycam(&format!(
+                "DNeup5Aca2-3[DGalpNAcb1-4]DGalpb1-4DGlcpNAcb1-2DManpa1-3[DManpa1-6]DManpb1-4DGlcpNAcb1-4[LFucpa1-6]DGlcpNAc{suffix}"
+            ))
+            .unwrap();
             let root = graph.root().unwrap();
             let residue = graph.residue(root).unwrap();
             assert_eq!(residue.anomeric_position, 1);

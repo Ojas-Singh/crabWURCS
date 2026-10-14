@@ -14,4 +14,7 @@ pub use model::{
     UndefinedModification, UndefinedParent,
 };
 pub use motif::{MotifError, MotifMatch, find_motif_matches};
-pub use registry::{ResidueKind, classify_residue, residue_from_kind};
+pub use registry::{
+    ResidueKind, classify_residue, classify_residue_configuration, mirror_skeleton_code,
+    residue_from_kind,
+};
