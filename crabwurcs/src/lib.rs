@@ -44,9 +44,10 @@ pub use crabwurcs_core::{
 };
 pub use crabwurcs_iupac::write_iupac_condensed_canonical;
 pub use crabwurcs_pdb::{
-    ExtractedGlycan, ExtractedGlycanWithProvenance, PdbResidueReference, extract_glycans_from_file,
-    extract_glycans_from_str, extract_glycans_with_provenance_from_file,
-    extract_glycans_with_provenance_from_str,
+    ExtractedGlycan, ExtractedGlycanWithProvenance, NamePolicy, PdbReadOptions, PdbReading,
+    PdbResidueReference, PdbWarning, PdbWarningKind, ResidueReading, StereoCentre,
+    extract_glycans_from_file, extract_glycans_from_str, extract_glycans_with_provenance_from_file,
+    extract_glycans_with_provenance_from_str, read_glycans_from_file, read_glycans_from_str,
 };
 pub use crabwurcs_snfg::{
     HighlightSelection, RenderOptions, SnfgError, SnfgResult, SourceNotation, render_png,

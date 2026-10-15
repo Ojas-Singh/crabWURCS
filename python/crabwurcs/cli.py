@@ -43,6 +43,8 @@ def _parser() -> argparse.ArgumentParser:
     pdb = commands.add_parser("pdb-to-wurcs", help="extract glycans from PDB/mmCIF")
     pdb.add_argument("input")
     pdb.add_argument("--to", dest="to_format", default="wurcs")
+    pdb.add_argument("--policy", default="coordinates", choices=("coordinates", "names", "strict"))
+    pdb.add_argument("--quiet", action="store_true", help="do not print warnings")
 
     render = commands.add_parser("render", help="render an SNFG SVG or PNG")
     render.add_argument("input", nargs="?")
@@ -75,7 +77,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         elif args.command == "wurcs-to-mol":
             print(convert(_text(args.input, bool(args.input)), args.format, Format.WURCS))
         elif args.command == "pdb-to-wurcs":
-            for extracted in extract_pdb_file(args.input):
+            for extracted in extract_pdb_file(args.input, policy=args.policy):
+                if not args.quiet:
+                    for warning in extracted.warnings:
+                        print(f"warning: {warning}", file=sys.stderr)
                 notation = extracted.glycan.to(args.to_format)
                 print(f"{extracted.attachment_site}\t{notation}" if extracted.attachment_site else notation)
         elif args.command == "render":

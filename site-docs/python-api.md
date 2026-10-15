@@ -17,8 +17,8 @@ crabwurcs.detect_format(value)
 crabwurcs.convert(value, to_format, from_format="auto", table="off")
 crabwurcs.normalize_wurcs(value)
 crabwurcs.render_snfg(value, from_format="auto", image_format="svg")
-crabwurcs.extract_pdb(contents, format="auto")
-crabwurcs.extract_pdb_file(path)
+crabwurcs.extract_pdb(contents, format="auto", policy="coordinates")
+crabwurcs.extract_pdb_file(path, policy="coordinates")
 ```
 
 WURCS output is normalized by default. `normalize_wurcs` is strict and raises
@@ -30,6 +30,15 @@ losslessly by the local model.
 `ExtractedGlycan` is immutable and contains a `Glycan`, optional attachment
 site, and an immutable sequence of `PdbResidueReference`. Each reference has
 `node_index`, `chain`, `sequence_number`, and `insertion_code`.
+
+Residues are read from their coordinates. `ExtractedGlycan.warnings` holds a
+`PdbWarning` for every disagreement between a residue name and the
+coordinates (`kind`, the residue's location and name, `named`, `coordinates`,
+`positions`, `aspects`, and the `message` that `str()` returns), and
+`ExtractedGlycan.readings` a `ResidueReading` per residue (`from_coordinates`,
+`from_name`, `ring_atoms`, `backbone_atoms`, `centres`). `policy="names"` lets
+names decide where they say something; `policy="strict"` raises `PdbError`
+on a disagreement. See [PDB and mmCIF extraction](pdb.md).
 
 The package ships `py.typed` and complete public stubs. Native classes under
 `crabwurcs._native` are private implementation details.

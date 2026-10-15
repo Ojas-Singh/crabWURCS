@@ -107,9 +107,11 @@ rare constructs instead of dropping information. No network service is used.
   errors when a concrete molecule would require invented stereochemistry.
 - Compositions, uncertain linkage ensembles, probabilities, and variable
   repeats do not silently collapse to one molecule.
-- PDB/mmCIF extraction retains chain, sequence number, insertion code, and
-  graph-node provenance. Coordinate generation and PDB writing are out of
-  scope for 0.3.2.
+- PDB/mmCIF extraction reads every monosaccharide from its coordinates
+  (ring, configuration of every centre, anomer, substituents, linkages) and
+  reports residue names that disagree. It retains chain, sequence number,
+  insertion code, and graph-node provenance. Coordinate generation and PDB
+  writing are out of scope for 0.3.
 
 See the [complete residue table](https://github.com/Ojas-Singh/crabWURCS/blob/main/crabwurcs/docs/supported-monosaccharides.md)
 and [format limitations](https://ojas-singh.github.io/crabWURCS/formats/) for details.

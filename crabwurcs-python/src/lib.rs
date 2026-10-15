@@ -1,5 +1,5 @@
 use crabwurcs::mol::{ChemFormat, MolError};
-use crabwurcs::pdb::ExtractedGlycanWithProvenance;
+use crabwurcs::pdb::{ExtractedGlycanWithProvenance, NamePolicy, PdbReadOptions, PdbReading};
 use crabwurcs::{Format, ResidueGraph};
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
@@ -160,15 +160,61 @@ struct PyPdbResidueReference {
     insertion_code: Option<String>,
 }
 
+#[pyclass(name = "_PdbWarning", frozen, get_all, skip_from_py_object)]
+#[derive(Clone)]
+struct PyPdbWarning {
+    node_index: usize,
+    chain: String,
+    sequence_number: isize,
+    insertion_code: Option<String>,
+    residue_name: String,
+    kind: String,
+    named: Option<String>,
+    coordinates: Option<String>,
+    positions: Vec<u8>,
+    aspects: Vec<String>,
+    message: String,
+}
+
+#[pyclass(name = "_StereoCentre", frozen, get_all, skip_from_py_object)]
+#[derive(Clone)]
+struct PyStereoCentre {
+    position: u8,
+    atom: String,
+    code: String,
+    volume: f64,
+}
+
+#[pyclass(name = "_ResidueReading", frozen, get_all, skip_from_py_object)]
+#[derive(Clone)]
+struct PyResidueReading {
+    node_index: usize,
+    chain: String,
+    sequence_number: isize,
+    insertion_code: Option<String>,
+    residue_name: String,
+    from_coordinates: Option<String>,
+    from_name: Option<String>,
+    ring_atoms: Vec<String>,
+    backbone_atoms: Vec<String>,
+    centres: Vec<PyStereoCentre>,
+}
+
 #[pyclass(name = "_ExtractedGlycan", frozen, get_all, skip_from_py_object)]
 #[derive(Clone)]
 struct PyExtractedGlycan {
     glycan: PyGlycan,
     attachment_site: Option<String>,
     residues: Vec<PyPdbResidueReference>,
+    warnings: Vec<PyPdbWarning>,
+    readings: Vec<PyResidueReading>,
 }
 
-fn extracted_to_python(value: ExtractedGlycanWithProvenance) -> PyExtractedGlycan {
+fn extracted_to_python(
+    index: usize,
+    value: ExtractedGlycanWithProvenance,
+    reading: &PdbReading,
+) -> PyExtractedGlycan {
     PyExtractedGlycan {
         glycan: PyGlycan {
             graph: value.graph,
@@ -186,12 +232,72 @@ fn extracted_to_python(value: ExtractedGlycanWithProvenance) -> PyExtractedGlyca
                 insertion_code: residue.insertion_code,
             })
             .collect(),
+        warnings: reading
+            .warnings
+            .iter()
+            .filter(|warning| warning.glycan_index == index)
+            .map(|warning| PyPdbWarning {
+                node_index: warning.node_index,
+                chain: warning.chain.clone(),
+                sequence_number: warning.sequence_number,
+                insertion_code: warning.insertion_code.clone(),
+                residue_name: warning.residue_name.clone(),
+                kind: warning.kind.as_str().to_string(),
+                named: warning.named.clone(),
+                coordinates: warning.coordinates.clone(),
+                positions: warning.positions.clone(),
+                aspects: warning.aspects.clone(),
+                message: warning.to_string(),
+            })
+            .collect(),
+        readings: reading
+            .residues
+            .iter()
+            .filter(|residue| residue.glycan_index == index)
+            .map(|residue| PyResidueReading {
+                node_index: residue.node_index,
+                chain: residue.chain.clone(),
+                sequence_number: residue.sequence_number,
+                insertion_code: residue.insertion_code.clone(),
+                residue_name: residue.residue_name.clone(),
+                from_coordinates: residue.from_coordinates.clone(),
+                from_name: residue.from_name.clone(),
+                ring_atoms: residue.ring_atoms.clone(),
+                backbone_atoms: residue.backbone_atoms.clone(),
+                centres: residue
+                    .centres
+                    .iter()
+                    .map(|centre| PyStereoCentre {
+                        position: centre.position,
+                        atom: centre.atom.clone(),
+                        code: centre.code.to_string(),
+                        volume: centre.volume,
+                    })
+                    .collect(),
+            })
+            .collect(),
     }
 }
 
+fn reading_to_python(mut reading: PdbReading) -> Vec<PyExtractedGlycan> {
+    let glycans = std::mem::take(&mut reading.glycans);
+    glycans
+        .into_iter()
+        .enumerate()
+        .map(|(index, glycan)| extracted_to_python(index, glycan, &reading))
+        .collect()
+}
+
+fn parse_policy(policy: &str) -> PyResult<PdbReadOptions> {
+    policy
+        .parse::<NamePolicy>()
+        .map(PdbReadOptions::with_policy)
+        .map_err(ParseError::new_err)
+}
+
 #[pyfunction]
-#[pyo3(signature = (contents, format="auto"))]
-fn extract_pdb(contents: &str, format: &str) -> PyResult<Vec<PyExtractedGlycan>> {
+#[pyo3(signature = (contents, format="auto", policy="coordinates"))]
+fn extract_pdb(contents: &str, format: &str, policy: &str) -> PyResult<Vec<PyExtractedGlycan>> {
     let is_mmcif = match format.trim().to_ascii_lowercase().as_str() {
         "auto" => contents.trim_start().starts_with("data_"),
         "pdb" => false,
@@ -202,15 +308,18 @@ fn extract_pdb(contents: &str, format: &str) -> PyResult<Vec<PyExtractedGlycan>>
             )));
         }
     };
-    crabwurcs::extract_glycans_with_provenance_from_str(contents, is_mmcif)
-        .map(|values| values.into_iter().map(extracted_to_python).collect())
+    let options = parse_policy(policy)?;
+    crabwurcs::read_glycans_from_str(contents, is_mmcif, &options)
+        .map(reading_to_python)
         .map_err(|error| PdbError::new_err(error.to_string()))
 }
 
 #[pyfunction]
-fn extract_pdb_file(path: &str) -> PyResult<Vec<PyExtractedGlycan>> {
-    crabwurcs::extract_glycans_with_provenance_from_file(std::path::Path::new(path))
-        .map(|values| values.into_iter().map(extracted_to_python).collect())
+#[pyo3(signature = (path, policy="coordinates"))]
+fn extract_pdb_file(path: &str, policy: &str) -> PyResult<Vec<PyExtractedGlycan>> {
+    let options = parse_policy(policy)?;
+    crabwurcs::read_glycans_from_file(std::path::Path::new(path), &options)
+        .map(reading_to_python)
         .map_err(|error| PdbError::new_err(error.to_string()))
 }
 
@@ -266,6 +375,9 @@ fn crabwurcs_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyGlycan>()?;
     module.add_class::<PyPdbResidueReference>()?;
     module.add_class::<PyExtractedGlycan>()?;
+    module.add_class::<PyPdbWarning>()?;
+    module.add_class::<PyResidueReading>()?;
+    module.add_class::<PyStereoCentre>()?;
     module.add_function(wrap_pyfunction!(extract_pdb, module)?)?;
     module.add_function(wrap_pyfunction!(extract_pdb_file, module)?)?;
     module.add_function(wrap_pyfunction!(detect_format, module)?)?;
