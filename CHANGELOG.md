@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.3 - 2026-10-15
 
 PDB/mmCIF reading derives glycan chemistry from the 3D coordinates, so a
 glycan reads as the molecule its atoms describe whatever its residue names
