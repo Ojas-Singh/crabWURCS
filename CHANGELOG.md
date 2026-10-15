@@ -36,7 +36,8 @@ say. Several written strings change; they are listed under "Output changes".
   `ExtractedGlycan.warnings` and `.readings`. Command lines: `crabwurcs
   pdb-to-wurcs --policy coordinates|names|strict` prints the warnings to
   standard error (`--quiet` silences them). The `extract_glycans_*` functions
-  read with the default policy and drop the warnings.
+  read with the default policy and drop the warnings. `PdbError` gains the
+  variant `NamesContradictCoordinates` (an exhaustive `match` needs an arm).
 - **GLYCAM residue codes**: the case of the sugar letter is the configuration
   (upper case D, lower case L) for every sugar. The registry templates of
   IdoA, Alt and Sor are L, and their lower-case codes were mirrored: `0uA`,

@@ -274,6 +274,13 @@ fn ccd_components_are_read_from_their_coordinates_whatever_they_are_called() {
                     enantiomer,
                     "{context}, mirrored, named {name}"
                 );
+                // A name the reader knows is now the wrong enantiomer.
+                if reading.residues[0].from_name.is_some() {
+                    assert!(
+                        !contradictions(&reading).is_empty(),
+                        "{context}, mirrored, named {name}"
+                    );
+                }
             }
         }
     }
@@ -296,6 +303,8 @@ fn a_misleading_name_is_reported_and_the_coordinates_decide() {
         ("IDR", "0uA", &[]),
         ("IDR", "4uA", &[]),
         ("IDR", "0UA", &["C2", "C3", "C4", "C5"]),
+        ("IDR", "2uA", &[]),
+        ("IDR", "2UA", &["C2", "C3", "C4", "C5"]),
         ("IDR", "0uB", &["anomer"]),
         ("IDR", "IDR", &[]),
         ("IDR", "IDS", &[]),
