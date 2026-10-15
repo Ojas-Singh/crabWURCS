@@ -180,4 +180,4 @@ def test_python_cli_normalization(capsys):
 
 
 def test_version_is_synchronized():
-    assert crabwurcs.__version__ == "0.3.2"
+    assert crabwurcs.__version__ == "0.3.3"
