@@ -118,10 +118,11 @@ crabwurcs render --output <FILE> <INPUT>
 - `--scale <FACTOR>`: Scale the output
 
 ### `pdb-to-wurcs`
-Extract glycans from PDB/GLYCAM files.
+Extract glycans from PDB/mmCIF files. Every monosaccharide is read from its
+coordinates; a residue name that disagrees is reported on standard error.
 
 ```bash
-crabwurcs pdb-to-wurcs --to <FORMAT> <INPUT_FILE>
+crabwurcs pdb-to-wurcs --to <FORMAT> [--policy coordinates|names|strict] [--quiet] <INPUT_FILE>
 ```
 
 ## Examples
@@ -136,8 +137,8 @@ crabwurcs render \
   --output sialyl_lewis_x.svg \
   'Neu5Ac(a2-3)Gal(b1-4)[Fuc(a1-3)]GlcNAc(b1-3)Gal(b1-4)Glc'
 
-# Batch processing
-crabwurcs pdb-to-wurcs --to iupac-condensed --output glycans.txt *.pdb
+# Glycans of a structure, names checked against the coordinates
+crabwurcs pdb-to-wurcs --to iupac-condensed --policy strict structure.cif
 
 # Composition rendering
 crabwurcs render --output composition.svg '{Hex}3,{HexNAc}2,{dHex}1'

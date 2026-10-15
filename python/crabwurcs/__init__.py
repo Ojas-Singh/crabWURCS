@@ -107,12 +107,75 @@ class PdbResidueReference:
 
 
 @dataclass(frozen=True)
+class PdbWarning:
+    """Something a residue name and the coordinates disagree on, or that the
+    coordinates cannot decide.
+
+    ``kind`` is ``name-contradicts-coordinates``, ``missing-atoms``,
+    ``distorted-geometry``, ``unreadable-geometry``, ``no-ring`` or
+    ``unrecognized-group``. ``named`` and ``coordinates`` are short IUPAC
+    names of what each says (``α-L-IdopA``); ``aspects`` says what differs
+    (``C2``, ``anomer``, ``ring``, ``backbone``, ``C2 substituent``).
+    """
+
+    node_index: int
+    chain: str
+    sequence_number: int
+    insertion_code: Optional[str]
+    residue_name: str
+    kind: str
+    named: Optional[str]
+    coordinates: Optional[str]
+    positions: Sequence[int]
+    aspects: Sequence[str]
+    message: str
+
+    def __str__(self) -> str:
+        return self.message
+
+
+@dataclass(frozen=True)
+class StereoCentre:
+    """One configuration read from a signed volume: the Fischer side ``1``
+    (left) or ``2`` (right) and the volume normalised by the bond lengths."""
+
+    position: int
+    atom: str
+    code: str
+    volume: float
+
+
+@dataclass(frozen=True)
+class ResidueReading:
+    """What the coordinates and the residue name say about one residue, as
+    WURCS UniqueRES strings, with the ring, backbone and centres read."""
+
+    node_index: int
+    chain: str
+    sequence_number: int
+    insertion_code: Optional[str]
+    residue_name: str
+    from_coordinates: Optional[str]
+    from_name: Optional[str]
+    ring_atoms: Sequence[str]
+    backbone_atoms: Sequence[str]
+    centres: Sequence[StereoCentre]
+
+
+@dataclass(frozen=True)
 class ExtractedGlycan:
-    """A glycan extracted from PDB/mmCIF with attachment and provenance."""
+    """A glycan extracted from PDB/mmCIF with attachment and provenance.
+
+    Every residue is read from its coordinates; ``warnings`` lists where a
+    residue name disagrees with them, and ``readings`` what each residue's
+    coordinates and name say.
+    """
 
     glycan: Glycan
     attachment_site: Optional[str]
     residues: Sequence[PdbResidueReference]
+    warnings: Sequence[PdbWarning] = ()
+    readings: Sequence[ResidueReading] = ()
 
 
 def detect_format(value: str) -> Format:
@@ -178,26 +241,79 @@ def _wrap_extracted(values: Iterable[object]) -> List[ExtractedGlycan]:
             )
             for reference in value.residues
         )
+        warnings = tuple(
+            PdbWarning(
+                node_index=warning.node_index,
+                chain=warning.chain,
+                sequence_number=warning.sequence_number,
+                insertion_code=warning.insertion_code,
+                residue_name=warning.residue_name,
+                kind=warning.kind,
+                named=warning.named,
+                coordinates=warning.coordinates,
+                positions=tuple(warning.positions),
+                aspects=tuple(warning.aspects),
+                message=warning.message,
+            )
+            for warning in value.warnings
+        )
+        readings = tuple(
+            ResidueReading(
+                node_index=reading.node_index,
+                chain=reading.chain,
+                sequence_number=reading.sequence_number,
+                insertion_code=reading.insertion_code,
+                residue_name=reading.residue_name,
+                from_coordinates=reading.from_coordinates,
+                from_name=reading.from_name,
+                ring_atoms=tuple(reading.ring_atoms),
+                backbone_atoms=tuple(reading.backbone_atoms),
+                centres=tuple(
+                    StereoCentre(
+                        position=centre.position,
+                        atom=centre.atom,
+                        code=centre.code,
+                        volume=centre.volume,
+                    )
+                    for centre in reading.centres
+                ),
+            )
+            for reading in value.readings
+        )
         results.append(
             ExtractedGlycan(
                 glycan=Glycan(value.glycan),
                 attachment_site=value.attachment_site,
                 residues=references,
+                warnings=warnings,
+                readings=readings,
             )
         )
     return results
 
 
-def extract_pdb(contents: str, format: str = "auto") -> List[ExtractedGlycan]:
-    """Extract glycans and provenance from PDB or mmCIF text."""
+def extract_pdb(
+    contents: str, format: str = "auto", *, policy: str = "coordinates"
+) -> List[ExtractedGlycan]:
+    """Extract glycans and provenance from PDB or mmCIF text.
 
-    return _wrap_extracted(_native.extract_pdb(contents, format))
+    Every monosaccharide is read from its coordinates. ``policy`` decides
+    what happens when a residue name disagrees: ``coordinates`` (the default:
+    the coordinates decide and the disagreement is a warning), ``names`` (the
+    name decides where it says something; still a warning) or ``strict``
+    (``PdbError``).
+    """
+
+    return _wrap_extracted(_native.extract_pdb(contents, format, policy))
 
 
-def extract_pdb_file(path: Union[str, PathLike[str]]) -> List[ExtractedGlycan]:
-    """Extract glycans and provenance from a PDB or mmCIF file."""
+def extract_pdb_file(
+    path: Union[str, PathLike[str]], *, policy: str = "coordinates"
+) -> List[ExtractedGlycan]:
+    """Extract glycans and provenance from a PDB or mmCIF file (see
+    ``extract_pdb`` for ``policy``)."""
 
-    return _wrap_extracted(_native.extract_pdb_file(str(Path(path))))
+    return _wrap_extracted(_native.extract_pdb_file(str(Path(path)), policy))
 
 
 __all__ = [
@@ -206,6 +322,9 @@ __all__ = [
     "ImageFormat",
     "Glycan",
     "PdbResidueReference",
+    "PdbWarning",
+    "StereoCentre",
+    "ResidueReading",
     "ExtractedGlycan",
     "CrabWurcsError",
     "ParseError",

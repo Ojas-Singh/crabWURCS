@@ -402,6 +402,7 @@ name = "crabwurcs-pdb"
 version = "0.3.2"
 dependencies = [
  "crabwurcs-core",
+ "crabwurcs-iupac",
  "crabwurcs-mol",
  "pdbtbx",
  "petgraph",

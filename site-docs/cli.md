@@ -5,7 +5,7 @@ crabwurcs convert [--from FORMAT] --to FORMAT [--table off|fallback|check] [INPU
 crabwurcs normalize-wurcs [--input-file] [INPUT]
 crabwurcs mol-to-wurcs --format {mol,sdf,smiles} [FILE]
 crabwurcs wurcs-to-mol --format {mol,sdf,smiles} [FILE]
-crabwurcs pdb-to-wurcs [--to FORMAT] FILE
+crabwurcs pdb-to-wurcs [--to FORMAT] [--policy coordinates|names|strict] [--quiet] FILE
 crabwurcs render [--from FORMAT] [--output FILE] [INPUT]
 ```
 
@@ -25,3 +25,10 @@ record holds another structure.
 Every command that produces WURCS uses the offline normalizer. The dedicated
 `normalize-wurcs` command is strict and exits unsuccessfully rather than
 claiming an unsupported input was normalized.
+
+`pdb-to-wurcs` reads every monosaccharide from its coordinates and prints one
+line per glycan (`site<TAB>notation`). Where a residue name disagrees with the
+coordinates, or the coordinates cannot decide part of a residue, a
+`warning: ...` line goes to standard error (`--quiet` silences them).
+`--policy names` lets names decide where they say something; `--policy
+strict` fails on a disagreement. See [PDB and mmCIF extraction](pdb.md).

@@ -79,6 +79,66 @@ def test_pdb_extraction_exposes_immutable_provenance(tmp_path):
     assert results[0].residues[0].sequence_number == 1
 
 
+def _residue(atoms, name):
+    return "\n".join(
+        f"HETATM{serial:5d}  {atom:<3} {name:>3} A   1    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {atom[0]:>2}"
+        for serial, (atom, x, y, z) in enumerate(atoms, 1)
+    ) + "\nEND\n"
+
+
+# alpha-L-gulopyranuronic acid (wwPDB CCD LGU, ideal coordinates, heavy atoms).
+GULA = [
+    ("C1", -1.185, 1.216, 0.417),
+    ("C2", -1.774, -0.158, 0.746),
+    ("O2", -3.192, -0.125, 0.569),
+    ("C3", -1.165, -1.204, -0.193),
+    ("O3", -1.525, -0.902, -1.543),
+    ("C4", 0.359, -1.176, -0.050),
+    ("O4", 0.721, -1.542, 1.283),
+    ("C5", 0.866, 0.237, -0.348),
+    ("O5", 0.238, 1.164, 0.540),
+    ("C6", 2.360, 0.287, -0.152),
+    ("O6B", 3.166, -0.429, -0.951),
+    ("O6A", 2.832, 0.973, 0.724),
+    ("O1", -1.536, 1.577, -0.920),
+]
+
+
+def test_pdb_residues_are_read_from_coordinates_and_names_that_disagree_are_reported(tmp_path):
+    # GLYCAM names alpha-L-IdoA `2uA`; these coordinates are alpha-L-GulA.
+    pdb = _residue(GULA, "2uA")
+    [result] = crabwurcs.extract_pdb(pdb)
+    assert result.glycan.to("wurcs") == "WURCS=2.0/1,1,0/[a1121A-1a_1-5]/1/"
+    [warning] = result.warnings
+    assert warning.kind == "name-contradicts-coordinates"
+    assert str(warning) == "residue 2uA A:1: named α-L-IdopA, coordinates say α-L-GulpA (C2)"
+    assert warning.positions == (2,)
+    [reading] = result.readings
+    assert reading.from_coordinates == "a1121A-1a_1-5"
+    assert reading.from_name == "a2121A-1a_1-5"
+    assert [centre.atom for centre in reading.centres] == ["C1", "C2", "C3", "C4", "C5"]
+
+    [named] = crabwurcs.extract_pdb(pdb, policy="names")
+    assert named.glycan.to("wurcs") == "WURCS=2.0/1,1,0/[a2121A-1a_1-5]/1/"
+    assert len(named.warnings) == 1
+    try:
+        crabwurcs.extract_pdb(pdb, policy="strict")
+    except crabwurcs.PdbError as error:
+        assert "coordinates say α-L-GulpA (C2)" in str(error)
+    else:
+        raise AssertionError("expected PdbError")
+    try:
+        crabwurcs.extract_pdb(pdb, policy="bogus")
+    except crabwurcs.ParseError:
+        pass
+    else:
+        raise AssertionError("expected ParseError")
+
+    path = tmp_path / "gula.pdb"
+    path.write_text(pdb)
+    assert crabwurcs.extract_pdb_file(path)[0].warnings == result.warnings
+
+
 def test_python_cli_conversion(capsys):
     assert main(["convert", "--to", "wurcs", IUPAC]) == 0
     assert capsys.readouterr().out.startswith("WURCS=2.0/")

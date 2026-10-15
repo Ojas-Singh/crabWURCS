@@ -72,6 +72,29 @@ impl From<TableArg> for crabwurcs::TableMode {
     }
 }
 
+/// What decides when a residue name and the coordinates disagree.
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+enum PolicyArg {
+    /// The coordinates decide; names fill in only what the coordinates
+    /// cannot show (missing atoms, distorted centres).
+    #[default]
+    Coordinates,
+    /// Names decide wherever they say something.
+    Names,
+    /// The coordinates decide, and a disagreement is an error.
+    Strict,
+}
+
+impl From<PolicyArg> for crabwurcs::pdb::NamePolicy {
+    fn from(value: PolicyArg) -> Self {
+        match value {
+            PolicyArg::Coordinates => Self::Coordinates,
+            PolicyArg::Names => Self::Names,
+            PolicyArg::Strict => Self::Strict,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum MotifTextFormat {
     Auto,
@@ -161,11 +184,18 @@ enum Command {
 
     /// Extract glycan structure(s) from a PDB or mmCIF file (one line per
     /// glycan found). WURCS is the default; IUPAC and GLYCAM are available
-    /// through `--to`.
+    /// through `--to`. Every monosaccharide is read from its coordinates;
+    /// where a residue name disagrees, a warning goes to standard error.
     PdbToWurcs {
         input: PathBuf,
         #[arg(long, value_enum, default_value = "wurcs")]
         to: TextFormat,
+        /// What decides when a residue name and the coordinates disagree.
+        #[arg(long, value_enum, default_value = "coordinates")]
+        policy: PolicyArg,
+        /// Do not print warnings.
+        #[arg(long)]
+        quiet: bool,
     },
 
     /// Render a glycan as an SNFG SVG or PNG figure. Equivalent to seq2snfg.
@@ -203,7 +233,12 @@ fn main() -> ExitCode {
         Command::NormalizeWurcs { input, input_file } => run_normalize_wurcs(input, input_file),
         Command::MolToWurcs { format, input } => run_mol_to_wurcs(format, input),
         Command::WurcsToMol { format, input } => run_wurcs_to_mol(format, input),
-        Command::PdbToWurcs { input, to } => run_pdb_convert(input, to),
+        Command::PdbToWurcs {
+            input,
+            to,
+            policy,
+            quiet,
+        } => run_pdb_convert(input, to, policy, quiet),
         Command::Render {
             input,
             input_file,
@@ -308,12 +343,25 @@ fn run_wurcs_to_mol(format: ChemFormatArg, input: Option<PathBuf>) -> anyhow::Re
     Ok(())
 }
 
-fn run_pdb_convert(input: PathBuf, to: TextFormat) -> anyhow::Result<()> {
+fn run_pdb_convert(
+    input: PathBuf,
+    to: TextFormat,
+    policy: PolicyArg,
+    quiet: bool,
+) -> anyhow::Result<()> {
     if matches!(to, TextFormat::Auto) {
         anyhow::bail!("--to auto is not valid for PDB output");
     }
-    let glycans = crabwurcs::pdb::extract_glycans_from_file(&input)?;
-    for glycan in glycans {
+    let reading = crabwurcs::pdb::read_glycans_from_file(
+        &input,
+        &crabwurcs::pdb::PdbReadOptions::with_policy(policy.into()),
+    )?;
+    if !quiet {
+        for warning in &reading.warnings {
+            eprintln!("warning: {warning}");
+        }
+    }
+    for glycan in reading.glycans {
         let notation = crabwurcs::write_notation(&glycan.graph, to.into())?;
         match glycan.attachment_site {
             Some(site) => println!("{site}\t{notation}"),
@@ -467,6 +515,31 @@ mod tests {
         };
         assert_eq!(highlight_motifs.len(), 2);
         assert!(matches!(motif_from, MotifTextFormat::IupacCondensed));
+    }
+
+    #[test]
+    fn pdb_to_wurcs_takes_a_name_policy() {
+        let default = Cli::try_parse_from(["crabwurcs", "pdb-to-wurcs", "model.pdb"]).unwrap();
+        assert!(matches!(
+            default.command,
+            Command::PdbToWurcs {
+                policy: PolicyArg::Coordinates,
+                quiet: false,
+                ..
+            }
+        ));
+        for (value, expected) in [("names", "Names"), ("strict", "Strict")] {
+            let cli =
+                Cli::try_parse_from(["crabwurcs", "pdb-to-wurcs", "--policy", value, "model.pdb"])
+                    .unwrap();
+            let Command::PdbToWurcs { policy, .. } = cli.command else {
+                panic!("expected pdb-to-wurcs");
+            };
+            assert_eq!(format!("{policy:?}"), expected);
+        }
+        assert!(
+            Cli::try_parse_from(["crabwurcs", "pdb-to-wurcs", "--policy", "x", "a.pdb"]).is_err()
+        );
     }
 
     #[test]
