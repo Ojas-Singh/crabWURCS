@@ -1,0 +1,93 @@
+data_3CK7
+# Part of PDB entry 3CK7 (https://files.rcsb.org/download/3CK7.cif, wwPDB archive copy downloaded 2026-10-20,
+# SHA-256 f332f6a918f788cf11d697144c3a1247d7930c3eb567cc62f4a72758abb80973): the
+# _atom_site records of the six GLC of chain E (an alpha-cyclodextrin) (author numbering).
+# Regenerate with: awk '/^_atom_site\./{h=h $0 "\n"} /^(ATOM|HETATM)/ && ($19=="E" && $6=="GLC"){r=r $0 "\n"} END{printf "loop_\n%s%s", h, r}' 3CK7.cif
+loop_
+_atom_site.group_PDB 
+_atom_site.id 
+_atom_site.type_symbol 
+_atom_site.label_atom_id 
+_atom_site.label_alt_id 
+_atom_site.label_comp_id 
+_atom_site.label_asym_id 
+_atom_site.label_entity_id 
+_atom_site.label_seq_id 
+_atom_site.pdbx_PDB_ins_code 
+_atom_site.Cartn_x 
+_atom_site.Cartn_y 
+_atom_site.Cartn_z 
+_atom_site.occupancy 
+_atom_site.B_iso_or_equiv 
+_atom_site.pdbx_formal_charge 
+_atom_site.auth_seq_id 
+_atom_site.auth_comp_id 
+_atom_site.auth_asym_id 
+_atom_site.auth_atom_id 
+_atom_site.pdbx_PDB_model_num 
+HETATM 16003 C  C1  . GLC E 2 .   ? 2.077   -20.783 47.564  1.00 9.12  ? 1    GLC E C1  1 
+HETATM 16004 C  C2  . GLC E 2 .   ? 1.355   -20.083 46.417  1.00 8.75  ? 1    GLC E C2  1 
+HETATM 16005 C  C3  . GLC E 2 .   ? 1.983   -18.711 46.188  1.00 7.75  ? 1    GLC E C3  1 
+HETATM 16006 C  C4  . GLC E 2 .   ? 2.120   -17.848 47.482  1.00 9.28  ? 1    GLC E C4  1 
+HETATM 16007 C  C5  . GLC E 2 .   ? 2.542   -18.683 48.759  1.00 10.63 ? 1    GLC E C5  1 
+HETATM 16008 C  C6  . GLC E 2 .   ? 2.214   -18.004 50.099  1.00 12.00 ? 1    GLC E C6  1 
+HETATM 16009 O  O2  . GLC E 2 .   ? 1.481   -20.875 45.242  1.00 9.09  ? 1    GLC E O2  1 
+HETATM 16010 O  O3  . GLC E 2 .   ? 1.199   -18.022 45.223  1.00 9.88  ? 1    GLC E O3  1 
+HETATM 16011 O  O4  . GLC E 2 .   ? 3.188   -16.946 47.114  1.00 9.86  ? 1    GLC E O4  1 
+HETATM 16012 O  O5  . GLC E 2 .   ? 1.920   -19.997 48.755  1.00 9.74  ? 1    GLC E O5  1 
+HETATM 16013 O  O6  . GLC E 2 .   ? 2.662   -18.823 51.154  1.00 14.13 ? 1    GLC E O6  1 
+HETATM 16014 C  C1  . GLC E 2 .   ? 3.382   -15.771 47.906  1.00 6.95  ? 2    GLC E C1  1 
+HETATM 16015 C  C2  . GLC E 2 .   ? 4.002   -14.677 47.024  1.00 6.05  ? 2    GLC E C2  1 
+HETATM 16016 C  C3  . GLC E 2 .   ? 5.410   -15.101 46.541  1.00 5.93  ? 2    GLC E C3  1 
+HETATM 16017 C  C4  . GLC E 2 .   ? 6.319   -15.486 47.747  1.00 7.27  ? 2    GLC E C4  1 
+HETATM 16018 C  C5  . GLC E 2 .   ? 5.591   -16.495 48.656  1.00 6.80  ? 2    GLC E C5  1 
+HETATM 16019 C  C6  . GLC E 2 .   ? 6.325   -16.806 49.950  1.00 7.27  ? 2    GLC E C6  1 
+HETATM 16020 O  O2  . GLC E 2 .   ? 3.143   -14.424 45.911  1.00 5.52  ? 2    GLC E O2  1 
+HETATM 16021 O  O3  . GLC E 2 .   ? 5.996   -14.012 45.840  1.00 7.91  ? 2    GLC E O3  1 
+HETATM 16022 O  O4  . GLC E 2 .   ? 7.523   -16.023 47.221  1.00 8.78  ? 2    GLC E O4  1 
+HETATM 16023 O  O5  . GLC E 2 .   ? 4.267   -16.042 49.005  1.00 6.95  ? 2    GLC E O5  1 
+HETATM 16024 O  O6  . GLC E 2 .   ? 5.993   -18.123 50.331  1.00 8.52  ? 2    GLC E O6  1 
+HETATM 16025 C  C1  . GLC E 2 .   ? 8.694   -15.222 47.382  1.00 6.86  ? 3    GLC E C1  1 
+HETATM 16026 C  C2  . GLC E 2 .   ? 9.677   -15.335 46.213  1.00 7.62  ? 3    GLC E C2  1 
+HETATM 16027 C  C3  . GLC E 2 .   ? 10.263  -16.748 46.146  1.00 8.55  ? 3    GLC E C3  1 
+HETATM 16028 C  C4  . GLC E 2 .   ? 11.002  -17.054 47.464  1.00 10.08 ? 3    GLC E C4  1 
+HETATM 16029 C  C5  . GLC E 2 .   ? 10.103  -16.853 48.718  1.00 9.89  ? 3    GLC E C5  1 
+HETATM 16030 C  C6  . GLC E 2 .   ? 10.919  -16.889 50.018  1.00 10.69 ? 3    GLC E C6  1 
+HETATM 16031 O  O2  . GLC E 2 .   ? 8.986   -15.010 45.001  1.00 8.91  ? 3    GLC E O2  1 
+HETATM 16032 O  O3  . GLC E 2 .   ? 11.171  -16.861 45.041  1.00 8.30  ? 3    GLC E O3  1 
+HETATM 16033 O  O4  . GLC E 2 .   ? 11.392  -18.435 47.444  1.00 7.36  ? 3    GLC E O4  1 
+HETATM 16034 O  O5  . GLC E 2 .   ? 9.367   -15.584 48.635  1.00 9.44  ? 3    GLC E O5  1 
+HETATM 16035 O  O6  . GLC E 2 .   ? 10.060  -16.717 51.115  1.00 19.37 ? 3    GLC E O6  1 
+HETATM 16036 C  C1  . GLC E 2 .   ? 12.797  -18.716 47.750  1.00 7.89  ? 4    GLC E C1  1 
+HETATM 16037 C  C2  . GLC E 2 .   ? 13.362  -19.487 46.549  1.00 9.47  ? 4    GLC E C2  1 
+HETATM 16038 C  C3  . GLC E 2 .   ? 12.461  -20.713 46.328  1.00 9.92  ? 4    GLC E C3  1 
+HETATM 16039 C  C4  . GLC E 2 .   ? 12.476  -21.580 47.577  1.00 9.42  ? 4    GLC E C4  1 
+HETATM 16040 C  C5  . GLC E 2 .   ? 11.994  -20.713 48.813  1.00 10.13 ? 4    GLC E C5  1 
+HETATM 16041 C  C6  . GLC E 2 .   ? 12.089  -21.506 50.143  1.00 11.07 ? 4    GLC E C6  1 
+HETATM 16042 O  O2  . GLC E 2 .   ? 13.318  -18.659 45.387  1.00 8.61  ? 4    GLC E O2  1 
+HETATM 16043 O  O3  . GLC E 2 .   ? 12.940  -21.489 45.226  1.00 10.13 ? 4    GLC E O3  1 
+HETATM 16044 O  O4  . GLC E 2 .   ? 11.576  -22.678 47.230  1.00 7.37  ? 4    GLC E O4  1 
+HETATM 16045 O  O5  . GLC E 2 .   ? 12.873  -19.569 48.949  1.00 7.46  ? 4    GLC E O5  1 
+HETATM 16046 O  O6  . GLC E 2 .   ? 11.637  -20.723 51.228  1.00 13.51 ? 4    GLC E O6  1 
+HETATM 16047 C  C1  . GLC E 2 .   ? 11.292  -23.795 48.065  1.00 6.77  ? 5    GLC E C1  1 
+HETATM 16048 C  C2  . GLC E 2 .   ? 10.676  -24.878 47.170  1.00 6.29  ? 5    GLC E C2  1 
+HETATM 16049 C  C3  . GLC E 2 .   ? 9.303   -24.447 46.597  1.00 6.21  ? 5    GLC E C3  1 
+HETATM 16050 C  C4  . GLC E 2 .   ? 8.338   -24.032 47.744  1.00 8.36  ? 5    GLC E C4  1 
+HETATM 16051 C  C5  . GLC E 2 .   ? 9.009   -23.009 48.681  1.00 8.38  ? 5    GLC E C5  1 
+HETATM 16052 C  C6  . GLC E 2 .   ? 8.184   -22.721 49.935  1.00 9.24  ? 5    GLC E C6  1 
+HETATM 16053 O  O2  . GLC E 2 .   ? 11.599  -25.170 46.123  1.00 6.83  ? 5    GLC E O2  1 
+HETATM 16054 O  O3  . GLC E 2 .   ? 8.766   -25.559 45.896  1.00 9.55  ? 5    GLC E O3  1 
+HETATM 16055 O  O4  . GLC E 2 .   ? 7.120   -23.453 47.242  1.00 10.03 ? 5    GLC E O4  1 
+HETATM 16056 O  O5  . GLC E 2 .   ? 10.334  -23.461 49.112  1.00 8.07  ? 5    GLC E O5  1 
+HETATM 16057 O  O6  . GLC E 2 .   ? 8.860   -21.761 50.727  1.00 12.14 ? 5    GLC E O6  1 
+HETATM 16058 C  C1  . GLC E 2 .   ? 5.989   -24.303 47.429  1.00 10.34 ? 6    GLC E C1  1 
+HETATM 16059 C  C2  . GLC E 2 .   ? 5.027   -24.342 46.214  1.00 9.75  ? 6    GLC E C2  1 
+HETATM 16060 C  C3  . GLC E 2 .   ? 4.224   -23.033 46.043  1.00 10.96 ? 6    GLC E C3  1 
+HETATM 16061 C  C4  . GLC E 2 .   ? 3.937   -22.280 47.387  1.00 10.51 ? 6    GLC E C4  1 
+HETATM 16062 C  C5  . GLC E 2 .   ? 4.897   -22.552 48.581  1.00 8.08  ? 6    GLC E C5  1 
+HETATM 16063 C  C6  . GLC E 2 .   ? 4.351   -22.071 49.938  1.00 7.03  ? 6    GLC E C6  1 
+HETATM 16064 O  O2  . GLC E 2 .   ? 5.747   -24.612 45.015  1.00 11.98 ? 6    GLC E O2  1 
+HETATM 16065 O  O3  . GLC E 2 .   ? 2.984   -23.306 45.392  1.00 14.88 ? 6    GLC E O3  1 
+HETATM 16066 O  O4  . GLC E 2 .   ? 3.492   -20.942 47.280  1.00 9.72  ? 6    GLC E O4  1 
+HETATM 16067 O  O5  . GLC E 2 .   ? 5.197   -23.981 48.600  1.00 12.00 ? 6    GLC E O5  1 
+HETATM 16068 O  O6  . GLC E 2 .   ? 3.592   -23.077 50.550  1.00 8.81  ? 6    GLC E O6  1 

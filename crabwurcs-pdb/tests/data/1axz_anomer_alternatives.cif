@@ -1,0 +1,51 @@
+data_1AXZ
+# Part of PDB entry 1AXZ (https://files.rcsb.org/download/1AXZ.cif, wwPDB archive copy downloaded 2026-10-20,
+# SHA-256 384eb72c49f8ec58c348911aff4a065309fe451f05acea226a262b1da75190f7): the
+# _atom_site records of GLA A401 (alternative location A) and GAL A402 (B), the alpha and the beta anomer of one galactose (author numbering).
+# Regenerate with: awk '/^_atom_site\./{h=h $0 "\n"} /^(ATOM|HETATM)/ && ($19 $17=="A401"||$19 $17=="A402"){r=r $0 "\n"} END{printf "loop_\n%s%s", h, r}' 1AXZ.cif
+loop_
+_atom_site.group_PDB 
+_atom_site.id 
+_atom_site.type_symbol 
+_atom_site.label_atom_id 
+_atom_site.label_alt_id 
+_atom_site.label_comp_id 
+_atom_site.label_asym_id 
+_atom_site.label_entity_id 
+_atom_site.label_seq_id 
+_atom_site.pdbx_PDB_ins_code 
+_atom_site.Cartn_x 
+_atom_site.Cartn_y 
+_atom_site.Cartn_z 
+_atom_site.occupancy 
+_atom_site.B_iso_or_equiv 
+_atom_site.pdbx_formal_charge 
+_atom_site.auth_seq_id 
+_atom_site.auth_comp_id 
+_atom_site.auth_asym_id 
+_atom_site.auth_atom_id 
+_atom_site.pdbx_PDB_model_num 
+HETATM 1936 C  C1  A GLA C 3 .   ? 17.061  -1.233  36.442  0.50 16.17 ? 401 GLA A C1  1 
+HETATM 1937 C  C2  A GLA C 3 .   ? 16.052  -0.655  35.445  0.50 16.24 ? 401 GLA A C2  1 
+HETATM 1938 C  C3  A GLA C 3 .   ? 14.656  -1.215  35.711  0.50 16.49 ? 401 GLA A C3  1 
+HETATM 1939 C  C4  A GLA C 3 .   ? 14.722  -2.738  35.712  0.50 16.41 ? 401 GLA A C4  1 
+HETATM 1940 C  C5  A GLA C 3 .   ? 15.780  -3.225  36.702  0.50 17.62 ? 401 GLA A C5  1 
+HETATM 1941 C  C6  A GLA C 3 .   ? 15.941  -4.731  36.706  0.50 18.30 ? 401 GLA A C6  1 
+HETATM 1942 O  O1  A GLA C 3 .   ? 16.716  -0.868  37.733  0.45 14.97 ? 401 GLA A O1  1 
+HETATM 1943 O  O2  A GLA C 3 .   ? 16.025  0.757   35.563  0.50 16.03 ? 401 GLA A O2  1 
+HETATM 1944 O  O3  A GLA C 3 .   ? 13.751  -0.772  34.705  0.50 15.16 ? 401 GLA A O3  1 
+HETATM 1945 O  O4  A GLA C 3 .   ? 15.048  -3.197  34.409  0.50 15.45 ? 401 GLA A O4  1 
+HETATM 1946 O  O5  A GLA C 3 .   ? 17.066  -2.661  36.371  0.50 17.36 ? 401 GLA A O5  1 
+HETATM 1947 O  O6  A GLA C 3 .   ? 16.719  -5.146  37.820  0.50 19.65 ? 401 GLA A O6  1 
+HETATM 1948 C  C1  B GAL D 4 .   ? 16.989  -1.261  36.522  0.50 20.82 ? 402 GAL A C1  1 
+HETATM 1949 C  C2  B GAL D 4 .   ? 16.000  -0.680  35.510  0.50 20.67 ? 402 GAL A C2  1 
+HETATM 1950 C  C3  B GAL D 4 .   ? 14.605  -1.240  35.768  0.50 20.18 ? 402 GAL A C3  1 
+HETATM 1951 C  C4  B GAL D 4 .   ? 14.655  -2.766  35.762  0.50 20.09 ? 402 GAL A C4  1 
+HETATM 1952 C  C5  B GAL D 4 .   ? 15.701  -3.254  36.762  0.50 21.21 ? 402 GAL A C5  1 
+HETATM 1953 C  C6  B GAL D 4 .   ? 15.862  -4.760  36.748  0.50 21.75 ? 402 GAL A C6  1 
+HETATM 1954 O  O1  B GAL D 4 .   ? 18.268  -0.822  36.229  0.55 22.58 ? 402 GAL A O1  1 
+HETATM 1955 O  O2  B GAL D 4 .   ? 15.977  0.736   35.622  0.50 19.87 ? 402 GAL A O2  1 
+HETATM 1956 O  O3  B GAL D 4 .   ? 13.710  -0.784  34.763  0.50 18.93 ? 402 GAL A O3  1 
+HETATM 1957 O  O4  B GAL D 4 .   ? 14.985  -3.232  34.461  0.50 18.83 ? 402 GAL A O4  1 
+HETATM 1958 O  O5  B GAL D 4 .   ? 16.988  -2.689  36.449  0.50 21.69 ? 402 GAL A O5  1 
+HETATM 1959 O  O6  B GAL D 4 .   ? 16.725  -5.187  37.791  0.50 22.97 ? 402 GAL A O6  1 

@@ -1,0 +1,40 @@
+data_5H47
+# Part of PDB entry 5H47 (https://files.rcsb.org/download/5H47.cif, wwPDB archive copy downloaded 2026-10-20,
+# SHA-256 c10c32055f410819079439725f7bf238267f490203c2a21999ebc14420f697a6): the
+# _atom_site records of FSW A1001 (methyl 6-deoxy-2-Se-methyl-2-seleno-alpha-L-galactopyranoside) (author numbering).
+# Regenerate with: awk '/^_atom_site\./{h=h $0 "\n"} /^(ATOM|HETATM)/ && ($19 $17=="A1001"){r=r $0 "\n"} END{printf "loop_\n%s%s", h, r}' 5H47.cif
+loop_
+_atom_site.group_PDB 
+_atom_site.id 
+_atom_site.type_symbol 
+_atom_site.label_atom_id 
+_atom_site.label_alt_id 
+_atom_site.label_comp_id 
+_atom_site.label_asym_id 
+_atom_site.label_entity_id 
+_atom_site.label_seq_id 
+_atom_site.pdbx_PDB_ins_code 
+_atom_site.Cartn_x 
+_atom_site.Cartn_y 
+_atom_site.Cartn_z 
+_atom_site.occupancy 
+_atom_site.B_iso_or_equiv 
+_atom_site.pdbx_formal_charge 
+_atom_site.auth_seq_id 
+_atom_site.auth_comp_id 
+_atom_site.auth_asym_id 
+_atom_site.auth_atom_id 
+_atom_site.pdbx_PDB_model_num 
+HETATM 29233 O  O3  . FSW M  2 .   ? 0.828   111.291 122.138 1.00 30.16  ? 1001 FSW A O3  1 
+HETATM 29234 C  C3  . FSW M  2 .   ? -0.075  110.544 121.355 1.00 36.13  ? 1001 FSW A C3  1 
+HETATM 29235 C  C4  . FSW M  2 .   ? 0.643   110.102 120.083 1.00 36.34  ? 1001 FSW A C4  1 
+HETATM 29236 O  O4  . FSW M  2 .   ? 1.572   111.007 119.461 1.00 34.37  ? 1001 FSW A O4  1 
+HETATM 29237 C  C5  . FSW M  2 .   ? -0.238  109.110 119.355 1.00 38.33  ? 1001 FSW A C5  1 
+HETATM 29238 C  C6  . FSW M  2 .   ? 0.441   108.450 118.175 1.00 38.34  ? 1001 FSW A C6  1 
+HETATM 29239 O  O5  . FSW M  2 .   ? -1.441  109.782 118.947 1.00 40.94  ? 1001 FSW A O5  1 
+HETATM 29240 C  C2  . FSW M  2 .   ? -1.289  111.360 120.899 1.00 42.70  ? 1001 FSW A C2  1 
+HETATM 29241 SE SE2 . FSW M  2 .   ? -2.190  112.297 122.401 1.00 52.43  ? 1001 FSW A SE2 1 
+HETATM 29242 C  C8  . FSW M  2 .   ? -4.085  112.167 121.835 1.00 55.22  ? 1001 FSW A C8  1 
+HETATM 29243 C  C1  . FSW M  2 .   ? -2.196  110.442 119.995 1.00 41.59  ? 1001 FSW A C1  1 
+HETATM 29244 O  O1  . FSW M  2 .   ? -2.880  109.412 120.717 1.00 42.72  ? 1001 FSW A O1  1 
+HETATM 29245 C  C7  . FSW M  2 .   ? -4.073  108.851 120.150 1.00 43.20  ? 1001 FSW A C7  1 

@@ -63,7 +63,9 @@ the same way and return the glycans only.
 - Archive entries cut to a few residues: N-, O- and C-glycan attachment
   sites from `_struct_conn`, `LINK` and distances (1EO8, 1G1S, 5LFR), a
   calcium ion that is no attachment (1K9I), space-group items pdbtbx refuses
-  (31NP) (`tests/archive_entries.rs`)
+  (31NP), anomers deposited as two residues (4D52, 1AXZ), thioglycosides
+  (1A78, 5M77), a 6-fluoro sugar (9I4K), a cyclodextrin (3CK7), residues
+  without an IUPAC condensed name (5H47, 5D2A) (`tests/archive_entries.rs`)
 - Opt-in: every GlycoShape Level 1 file against its entry name and the entry
   audit, and ring by ring against an independent coordinate reader
   (`tests/glycoshape_coordinates.rs`)

@@ -585,6 +585,18 @@ struct Link {
     child: usize,
     parent_position: u8,
     child_position: u8,
+    /// WURCS MAP of a bridge other than oxygen: `*S*` for a thioglycoside,
+    /// `*N*` for an N-glycosidic bond between sugars.
+    bridge: Option<&'static str>,
+}
+
+/// The bridge MAP of a glycosidic bond through `element`; `None` for O.
+fn glycosidic_bridge(element: &str) -> Option<&'static str> {
+    match element {
+        "S" => Some("*S*"),
+        "N" => Some("*N*"),
+        _ => None,
+    }
 }
 
 /// Residues that never name an attachment perceived from distances: water,
@@ -604,6 +616,113 @@ fn attachment_distance(element: &str) -> Option<f64> {
     }
 }
 
+/// Heavy atoms of two residues closer than this (Å) are one atom modelled
+/// twice.
+const SAME_ATOM: f64 = 0.6;
+
+/// Residues modelled as alternatives of another residue at the same place:
+/// an α and a β anomer deposited as two residues (4D52: `GXL` 1316 and
+/// `GIV` 2316 on the same atoms; 1AXZ: `GLA` 401 in alternative location A,
+/// `GAL` 402 in B). Read together, their atoms bond to each other and every
+/// centre becomes unreadable. Two HETATM residues are alternatives when three
+/// or more of their heavy atoms lie within [`SAME_ATOM`] of each other; of
+/// each such set, the residue of the first alternative location is kept,
+/// then the one of higher occupancy, then the first in the file. The
+/// residues returned are keys (addresses) of pdbtbx residues.
+fn alternative_residues(located: &[pdbtbx::AtomConformerResidueChainModel<'_>]) -> HashSet<usize> {
+    struct Candidate {
+        order: usize,
+        alternative: Option<String>,
+        occupancy: f64,
+        atoms: usize,
+    }
+    let mut candidates: HashMap<usize, Candidate> = HashMap::new();
+    // Heavy atoms by grid cell: (residue, position).
+    type Cell = (i64, i64, i64);
+    let mut grid: HashMap<Cell, Vec<(usize, [f64; 3])>> = HashMap::new();
+    let cell = |position: [f64; 3]| {
+        (
+            (position[0] / SAME_ATOM).floor() as i64,
+            (position[1] / SAME_ATOM).floor() as i64,
+            (position[2] / SAME_ATOM).floor() as i64,
+        )
+    };
+    let mut overlaps: HashMap<(usize, usize), usize> = HashMap::new();
+    for hierarchy in located {
+        let atom = hierarchy.atom();
+        let element = atom
+            .element()
+            .map(|element| element.symbol().to_ascii_uppercase())
+            .unwrap_or_else(|| element_from_name(atom.name()));
+        if !atom.hetero() || matches!(element.as_str(), "H" | "D") {
+            continue;
+        }
+        let key = std::ptr::from_ref(hierarchy.residue()) as usize;
+        let order = candidates.len();
+        let candidate = candidates.entry(key).or_insert_with(|| Candidate {
+            order,
+            alternative: hierarchy
+                .conformer()
+                .alternative_location()
+                .map(str::to_string),
+            occupancy: 0.0,
+            atoms: 0,
+        });
+        candidate.occupancy += atom.occupancy();
+        candidate.atoms += 1;
+        let position = [atom.x(), atom.y(), atom.z()];
+        let (x, y, z) = cell(position);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    for (other, other_position) in
+                        grid.get(&(x + dx, y + dy, z + dz)).into_iter().flatten()
+                    {
+                        if *other != key
+                            && geometry::distance(position, *other_position) < SAME_ATOM
+                        {
+                            *overlaps
+                                .entry((key.min(*other), key.max(*other)))
+                                .or_default() += 1;
+                        }
+                    }
+                }
+            }
+        }
+        grid.entry((x, y, z)).or_default().push((key, position));
+    }
+    let mut partners: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (&(first, second), &count) in &overlaps {
+        if count >= 3 {
+            partners.entry(first).or_default().push(second);
+            partners.entry(second).or_default().push(first);
+        }
+    }
+    let rank = |key: &usize| {
+        let candidate = &candidates[key];
+        (
+            candidate.alternative.is_some(),
+            candidate.alternative.clone(),
+            std::cmp::Reverse(
+                (candidate.occupancy / candidate.atoms.max(1) as f64 * 1000.0).round() as i64,
+            ),
+            candidate.order,
+        )
+    };
+    let mut ranked = partners.keys().copied().collect::<Vec<_>>();
+    ranked.sort_by_key(rank);
+    let mut kept: HashSet<usize> = HashSet::new();
+    let mut dropped: HashSet<usize> = HashSet::new();
+    for key in ranked {
+        if partners[&key].iter().any(|other| kept.contains(other)) {
+            dropped.insert(key);
+        } else {
+            kept.insert(key);
+        }
+    }
+    dropped
+}
+
 fn read_structure(
     pdb: &pdbtbx::PDB,
     raw_names: &HashMap<(isize, String), String>,
@@ -612,30 +731,41 @@ fn read_structure(
     options: &PdbReadOptions,
 ) -> PdbResult<PdbReading> {
     // Atoms of the first model; of alternative locations, the atoms without
-    // one and those of the first.
+    // one and those of the first; of residues modelled as alternatives of
+    // each other, one.
+    let mut first_alternative: HashMap<usize, Option<usize>> = HashMap::new();
+    let located = pdb
+        .atoms_with_hierarchy()
+        .filter(|hierarchy| {
+            let residue = hierarchy.residue();
+            let conformer = hierarchy.conformer();
+            let alternative = *first_alternative
+                .entry(std::ptr::from_ref(residue) as usize)
+                .or_insert_with(|| {
+                    residue
+                        .conformers()
+                        .find(|conformer| conformer.alternative_location().is_some())
+                        .map(|conformer| std::ptr::from_ref(conformer) as usize)
+                });
+            conformer.alternative_location().is_none()
+                || Some(std::ptr::from_ref(conformer) as usize) == alternative
+        })
+        .collect::<Vec<_>>();
+    let alternatives = alternative_residues(&located);
     let mut residues: Vec<ResidueMeta> = Vec::new();
     let mut residue_index: HashMap<usize, usize> = HashMap::new();
-    let mut first_alternative: HashMap<usize, Option<usize>> = HashMap::new();
     let mut atoms: Vec<StructureAtom> = Vec::new();
     let mut atom_index: HashMap<usize, usize> = HashMap::new();
     let mut atoms_by_serial: HashMap<usize, usize> = HashMap::new();
     let mut atoms_by_reference: HashMap<AtomReference, usize> = HashMap::new();
     let mut seen_names: HashSet<(usize, String)> = HashSet::new();
-    for hierarchy in pdb.atoms_with_hierarchy() {
+    for hierarchy in &located {
         let residue = hierarchy.residue();
         let residue_key = std::ptr::from_ref(residue) as usize;
-        let conformer = hierarchy.conformer();
-        let alternative = *first_alternative.entry(residue_key).or_insert_with(|| {
-            residue
-                .conformers()
-                .find(|conformer| conformer.alternative_location().is_some())
-                .map(|conformer| std::ptr::from_ref(conformer) as usize)
-        });
-        if conformer.alternative_location().is_some()
-            && Some(std::ptr::from_ref(conformer) as usize) != alternative
-        {
+        if alternatives.contains(&residue_key) {
             continue;
         }
+        let conformer = hierarchy.conformer();
         let next = residues.len();
         let index = *residue_index.entry(residue_key).or_insert_with(|| {
             let parsed_name = residue.name().unwrap_or("UNK");
@@ -838,6 +968,7 @@ fn read_structure(
                                         child: unit_index,
                                         parent_position: target_position,
                                         child_position: position,
+                                        bridge: glycosidic_bridge(&element),
                                     }
                                 } else {
                                     Link {
@@ -845,6 +976,7 @@ fn read_structure(
                                         child: owner,
                                         parent_position: position,
                                         child_position: target_position,
+                                        bridge: glycosidic_bridge(&element),
                                     }
                                 });
                             } else {
@@ -853,6 +985,7 @@ fn read_structure(
                                     child: unit_index,
                                     parent_position: target_position,
                                     child_position: position,
+                                    bridge: glycosidic_bridge(&element),
                                 });
                             }
                         }
@@ -1130,24 +1263,43 @@ fn read_structure(
                 centres: record.centres,
             });
         }
-        for link in links
+        let members_links = links
             .iter()
             .filter(|link| members.contains(&link.parent) && members.contains(&link.child))
-        {
-            graph.add_linkage(
-                nodes[&link.parent],
-                nodes[&link.child],
-                Linkage::new(
-                    CarbonPosition(link.parent_position),
-                    CarbonPosition(link.child_position),
-                ),
-            );
-        }
+            .collect::<Vec<_>>();
+        // A glycan in which every residue has a parent is a ring (a
+        // cyclodextrin): its root is a residue of the ring, and the linkage
+        // into the root closes it.
         let root = component
             .iter()
             .copied()
             .find(|unit| !has_parent.contains(unit))
-            .unwrap_or(component[0]);
+            .unwrap_or_else(|| {
+                let parent_of = members_links
+                    .iter()
+                    .map(|link| (link.child, link.parent))
+                    .collect::<HashMap<_, _>>();
+                let mut path = vec![component[0]];
+                let mut current = component[0];
+                while let Some(&parent) = parent_of.get(&current) {
+                    if let Some(start) = path.iter().position(|unit| *unit == parent) {
+                        return path[start..].iter().copied().min().unwrap_or(parent);
+                    }
+                    path.push(parent);
+                    current = parent;
+                }
+                component[0]
+            });
+        let closed = has_parent.contains(&root);
+        for link in members_links {
+            let mut linkage = Linkage::new(
+                CarbonPosition(link.parent_position),
+                CarbonPosition(link.child_position),
+            );
+            linkage.map_code = link.bridge.map(str::to_string);
+            linkage.cyclic = closed && link.child == root;
+            graph.add_linkage(nodes[&link.parent], nodes[&link.child], linkage);
+        }
         graph.set_root(nodes[&root]);
         let attachment_site = aglycone
             .get(&root)
@@ -1369,6 +1521,7 @@ impl NameOnly<'_> {
                 child,
                 parent_position,
                 child_position,
+                bridge: None,
             });
         }
         links

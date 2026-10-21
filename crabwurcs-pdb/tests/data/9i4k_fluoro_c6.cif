@@ -1,0 +1,55 @@
+data_9I4K
+# Part of PDB entry 9I4K (https://files.rcsb.org/download/9I4K.cif, wwPDB archive copy downloaded 2026-10-20,
+# SHA-256 bca4d46f3fbd48a55cb063bb3ed000d27be727d1bb66ce4e51b40d207bd4c33d): the
+# _atom_site records of A1I0L C1 (a 6-deoxy-6-fluoro GlcNAc methyl glycoside) and GAL C2 (author numbering).
+# Regenerate with: awk '/^_atom_site\./{h=h $0 "\n"} /^(ATOM|HETATM)/ && ($19 $17=="C1"||$19 $17=="C2"){r=r $0 "\n"} END{printf "loop_\n%s%s", h, r}' 9I4K.cif
+loop_
+_atom_site.group_PDB 
+_atom_site.id 
+_atom_site.type_symbol 
+_atom_site.label_atom_id 
+_atom_site.label_alt_id 
+_atom_site.label_comp_id 
+_atom_site.label_asym_id 
+_atom_site.label_entity_id 
+_atom_site.label_seq_id 
+_atom_site.pdbx_PDB_ins_code 
+_atom_site.Cartn_x 
+_atom_site.Cartn_y 
+_atom_site.Cartn_z 
+_atom_site.occupancy 
+_atom_site.B_iso_or_equiv 
+_atom_site.pdbx_formal_charge 
+_atom_site.auth_seq_id 
+_atom_site.auth_comp_id 
+_atom_site.auth_asym_id 
+_atom_site.auth_atom_id 
+_atom_site.pdbx_PDB_model_num 
+_atom_site.calc_flag 
+HETATM 2057 N N2  . A1I0L C 2 .   ? 24.134 -64.168 16.3   1   33.316 ? 1   A1I0L C N2  1 ? 
+HETATM 2058 C C3  . A1I0L C 2 .   ? 24.33  -61.74  16.739 1   32.374 ? 1   A1I0L C C3  1 ? 
+HETATM 2059 C C2  . A1I0L C 2 .   ? 24.381 -63.16  17.315 1   36.159 ? 1   A1I0L C C2  1 ? 
+HETATM 2060 C C1  . A1I0L C 2 .   ? 25.709 -63.394 18.037 1   41.39  ? 1   A1I0L C C1  1 ? 
+HETATM 2061 C CM  . A1I0L C 2 .   ? 26.867 -64.949 19.343 1   56.334 ? 1   A1I0L C CM  1 ? 
+HETATM 2062 C C8  . A1I0L C 2 .   ? 23.069 -66.193 15.419 1   34.195 ? 1   A1I0L C C8  1 ? 
+HETATM 2063 C C4  . A1I0L C 2 .   ? 24.704 -60.725 17.799 1   33.691 ? 1   A1I0L C C4  1 ? 
+HETATM 2064 O O4  . A1I0L C 2 .   ? 24.804 -59.442 17.185 1   26.895 ? 1   A1I0L C O4  1 ? 
+HETATM 2065 O O5  . A1I0L C 2 .   ? 25.958 -62.384 19.001 1   40.336 ? 1   A1I0L C O5  1 ? 
+HETATM 2066 C C5  . A1I0L C 2 .   ? 26.058 -61.081 18.432 1   35.436 ? 1   A1I0L C C5  1 ? 
+HETATM 2067 O O3  . A1I0L C 2 .   ? 23.024 -61.493 16.224 1   27.259 ? 1   A1I0L C O3  1 ? 
+HETATM 2068 O O1  . A1I0L C 2 .   ? 25.628 -64.592 18.734 1   53.394 ? 1   A1I0L C O1  1 ? 
+HETATM 2069 C C6  . A1I0L C 2 .   ? 26.481 -60.166 19.553 1   37.074 ? 1   A1I0L C C6  1 ? 
+HETATM 2070 F F6  . A1I0L C 2 .   ? 25.569 -60.138 20.515 1   36.776 ? 1   A1I0L C F6  1 ? 
+HETATM 2071 C C7  . A1I0L C 2 .   ? 23.34  -65.227 16.547 1   39.443 ? 1   A1I0L C C7  1 ? 
+HETATM 2072 O O7  . A1I0L C 2 .   ? 22.869 -65.409 17.669 1   41.683 ? 1   A1I0L C O7  1 ? 
+HETATM 2073 C C1  . GAL   C 2 .   ? 24.197 -58.38  17.849 1   29.052 ? 2   GAL   C C1  1 ? 
+HETATM 2074 C C2  . GAL   C 2 .   ? 24.702 -57.094 17.208 1   31.569 ? 2   GAL   C C2  1 ? 
+HETATM 2075 C C3  . GAL   C 2 .   ? 23.948 -55.878 17.707 1   29.835 ? 2   GAL   C C3  1 ? 
+HETATM 2076 C C4  . GAL   C 2 .   ? 22.464 -56.109 17.684 1   27.479 ? 2   GAL   C C4  1 ? 
+HETATM 2077 C C5  . GAL   C 2 .   ? 22.132 -57.406 18.424 1   26.991 ? 2   GAL   C C5  1 ? 
+HETATM 2078 C C6  . GAL   C 2 .   ? 20.663 -57.73  18.455 1   26.574 ? 2   GAL   C C6  1 ? 
+HETATM 2079 O O2  . GAL   C 2 .   ? 26.105 -56.956 17.459 1   27.768 ? 2   GAL   C O2  1 ? 
+HETATM 2080 O O3  . GAL   C 2 .   ? 24.268 -54.774 16.872 1   29.881 ? 2   GAL   C O3  1 ? 
+HETATM 2081 O O4  . GAL   C 2 .   ? 22.067 -56.158 16.3   1   26.251 ? 2   GAL   C O4  1 ? 
+HETATM 2082 O O5  . GAL   C 2 .   ? 22.784 -58.496 17.762 1   27.928 ? 2   GAL   C O5  1 ? 
+HETATM 2083 O O6  . GAL   C 2 .   ? 20.434 -59.052 19.004 1   29.285 ? 2   GAL   C O6  1 ? 

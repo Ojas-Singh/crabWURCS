@@ -621,7 +621,9 @@ pub(crate) fn carbon_readings(structure: &Structure, unit: &RingUnit) -> Vec<Car
             let terminal = index == 0 || index + 1 == count;
             if terminal {
                 // The ring oxygen is a substituent of a terminal ring carbon
-                // (C5 of a pentopyranose).
+                // (C5 of a pentopyranose). One heteroatom other than oxygen
+                // (6-amino-6-deoxy, 6-deoxy-6-fluoro, a 6-thio link) is a
+                // CH2-X carbon too; its group is read as a substituent.
                 let mut oxygens = exocyclic
                     .iter()
                     .filter(|atom| structure.atoms[**atom].is("O"))
@@ -629,13 +631,14 @@ pub(crate) fn carbon_readings(structure: &Structure, unit: &RingUnit) -> Vec<Car
                 if index == unit.ring_end {
                     oxygens += 1;
                 }
-                if exocyclic.iter().any(|atom| !structure.atoms[*atom].is("O")) {
+                if exocyclic.iter().any(|atom| !structure.is_heteroatom(*atom)) {
                     return CarbonReading::Unreadable;
                 }
-                let code = match oxygens {
-                    0 => 'm',
-                    1 => 'h',
-                    2 => 'A',
+                let others = exocyclic.len() + usize::from(index == unit.ring_end) - oxygens;
+                let code = match (oxygens, others) {
+                    (0, 0) => 'm',
+                    (1, 0) | (0, 1) => 'h',
+                    (2, 0) => 'A',
                     _ => return CarbonReading::Unreadable,
                 };
                 return CarbonReading::Terminal {

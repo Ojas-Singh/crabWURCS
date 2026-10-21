@@ -30,7 +30,11 @@ coordinates alone:
 - substituents (N-acetyl, N-glycolyl, N-sulfate, amino, O-sulfate, phosphate,
   phosphocholine, O-methyl, O-acetyl, fluoro) and glycosidic linkages come
   from what the ring atoms are bonded to, in the same residue or in another
-  (GLYCAM keeps sulfates in `SO3` residues).
+  (GLYCAM keeps sulfates in `SO3` residues). A glycosidic bond through S or
+  N is a WURCS bridge (`a1-b1*S*` for thiodigalactoside). A terminal carbon
+  with one N, S or F (6-amino-6-deoxy, 6-deoxy-6-fluoro, a 6-thio link) is a
+  hydroxymethyl position carrying that group (`6*F`). A glycan whose residues
+  close a ring (a cyclodextrin) keeps its closing linkage.
 
 Bonds are perceived from distances within each atom's valence (bonds inside a
 residue first, then explicit records, then contacts between residues), so a
@@ -77,11 +81,24 @@ mmCIF file, the first model and the `_struct_conn` rows are read. Of
 alternative locations, the atoms without one and those of the first are
 read. Gzipped files are not read; decompress them first.
 
+Two HETATM residues that put three or more heavy atoms within 0.6 Å of each
+other are one residue modelled twice (the α and the β anomer deposited as
+two residues, as in 4D52 or 1AXZ); one of them is read: the one in the first
+alternative location, then the one of higher occupancy, then the first in
+the file.
+
 Crystal items are not used. An mmCIF file whose space-group items disagree
 (archive entries such as 31NP state an H-M symbol and a Hall symbol that
 pdbtbx reads as different groups) is read again without its space-group and
 cell items, as is one whose space group or cell is unknown (`?`); any other
 parse error is reported.
+
+Not read from coordinates, and reported as warnings: selenium substituents
+(C2 of FSW is left undetermined), C-glycosides whose aglycone carbons belong
+to the sugar component (ZDC and similar glycomimetics read as octulose-like
+ketoses with the anomeric heteroatom missing; IUPAC condensed has no name
+for either), and intramolecular anhydro bridges (AAL,
+3,6-anhydro-L-galactose: an unrecognised group at C3 and C6, left out).
 
 ## Attachment site
 

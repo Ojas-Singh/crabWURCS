@@ -1,13 +1,14 @@
 //! wwPDB archive entries: the residue a glycan is attached to, read from
 //! `_struct_conn` and `LINK` records and, when a file records no connection,
-//! from distances; space-group items pdbtbx rejects.
+//! from distances; space-group items pdbtbx rejects; anomers deposited as two
+//! residues on the same atoms; thioglycosides, a fluorinated C6 and a
+//! cyclodextrin; residues IUPAC condensed has no name for.
 //!
-//! The fixtures are cut from archive files (`data/1eo8_glycosylation.*`,
-//! `data/5lfr_c_mannosylation.cif`, `data/1g1s_o_glycosylation.cif`,
-//! `data/1k9i_calcium.pdb`, `data/31np_space_group.cif`); each says where it
-//! comes from and how to regenerate it.
+//! The fixtures (`data/*.cif`, `data/*.pdb`) are cut from archive files; each
+//! says where it comes from and how to regenerate it.
 
 use crabwurcs_core::write_wurcs;
+use crabwurcs_iupac::{IupacError, parse_iupac_condensed, write_iupac_condensed};
 use crabwurcs_pdb::{PdbError, PdbReadOptions, read_glycans_from_str};
 
 const N_GLYCANS_1EO8_CIF: &str = include_str!("data/1eo8_glycosylation.cif");
@@ -16,6 +17,14 @@ const C_MANNOSIDE_5LFR: &str = include_str!("data/5lfr_c_mannosylation.cif");
 const O_GLYCAN_1G1S: &str = include_str!("data/1g1s_o_glycosylation.cif");
 const CALCIUM_1K9I: &str = include_str!("data/1k9i_calcium.pdb");
 const SPACE_GROUP_31NP: &str = include_str!("data/31np_space_group.cif");
+const ANOMER_RESIDUES_4D52: &str = include_str!("data/4d52_anomer_residues.cif");
+const ANOMER_ALTERNATIVES_1AXZ: &str = include_str!("data/1axz_anomer_alternatives.cif");
+const THIODIGALACTOSIDE_1A78: &str = include_str!("data/1a78_thiodigalactoside.cif");
+const THIO_LINK_5M77: &str = include_str!("data/5m77_thio_link_c6.cif");
+const FLUORO_C6_9I4K: &str = include_str!("data/9i4k_fluoro_c6.cif");
+const CYCLODEXTRIN_3CK7: &str = include_str!("data/3ck7_cyclodextrin.cif");
+const SELENOFUCOSIDE_5H47: &str = include_str!("data/5h47_selenofucoside.cif");
+const C_FUCOSIDE_5D2A: &str = include_str!("data/5d2a_c_fucoside.cif");
 
 /// `(attachment site, WURCS)` of every glycan, in file order.
 fn glycans(text: &str, is_mmcif: bool) -> Vec<(String, String)> {
@@ -165,5 +174,106 @@ fn other_parse_errors_still_stop_the_reading() {
             assert!(message.contains("Atom type not correct"), "{message}");
         }
         other => panic!("expected a parse error, got {other:?}"),
+    }
+}
+
+/// `(WURCS, IUPAC condensed)` of the only glycan of an mmCIF text, the IUPAC
+/// read back to the same WURCS.
+fn single_glycan(text: &str) -> (String, String) {
+    let reading = read_glycans_from_str(text, true, &PdbReadOptions::default()).unwrap();
+    assert_eq!(reading.glycans.len(), 1, "{:?}", reading.glycans);
+    let graph = &reading.glycans[0].graph;
+    let wurcs = write_wurcs(graph).unwrap();
+    let iupac = write_iupac_condensed(graph).unwrap();
+    assert_eq!(
+        write_wurcs(&parse_iupac_condensed(&iupac).unwrap()).unwrap(),
+        wurcs,
+        "{iupac}"
+    );
+    (wurcs, iupac)
+}
+
+#[test]
+fn an_anomer_deposited_as_a_second_residue_is_read_once() {
+    // 4D52: GXL (alpha, occupancy 0.2) and GIV (beta, 0.8) share the ring
+    // atoms. Read together, every centre was unreadable (`Res4`).
+    assert_eq!(
+        single_glycan(ANOMER_RESIDUES_4D52),
+        (
+            "WURCS=2.0/1,1,0/[a1221h-1b_1-5]/1/".to_string(),
+            "L-Gal(b1-".to_string()
+        )
+    );
+    // 1AXZ: GLA in alternative location A, GAL in B; they read as a
+    // 1-1-linked "GalA(b1-1)Gal(a1-".
+    assert_eq!(
+        single_glycan(ANOMER_ALTERNATIVES_1AXZ),
+        (
+            "WURCS=2.0/1,1,0/[a2112h-1a_1-5]/1/".to_string(),
+            "Gal(a1-".to_string()
+        )
+    );
+}
+
+#[test]
+fn a_thioglycosidic_bond_keeps_its_sulfur() {
+    // Thiodigalactoside (YIO, 1-thio-beta-D-galactose, and GAL): the S
+    // bridge was read as an O-glycosidic bond.
+    assert_eq!(
+        single_glycan(THIODIGALACTOSIDE_1A78),
+        (
+            "WURCS=2.0/1,2,1/[a2112h-1b_1-5]/1-1/a1-b1*S*".to_string(),
+            "Gal(b1-SH-1)Gal(b1-".to_string()
+        )
+    );
+    // 5M77: a mannose S-linked to C6 of a mannose, whose C6 (CH2-S) was
+    // unreadable.
+    assert_eq!(
+        single_glycan(THIO_LINK_5M77),
+        (
+            "WURCS=2.0/1,2,1/[a1122h-1a_1-5]/1-1/a6-b1*S*".to_string(),
+            "Man(a1-SH-6)Man(a1-".to_string()
+        )
+    );
+}
+
+#[test]
+fn a_terminal_carbon_with_a_fluorine_is_a_hydroxymethyl_position() {
+    let reading = read_glycans_from_str(FLUORO_C6_9I4K, true, &PdbReadOptions::default()).unwrap();
+    assert!(reading.warnings.is_empty(), "{:?}", reading.warnings);
+    assert_eq!(
+        write_wurcs(&reading.glycans[0].graph).unwrap(),
+        "WURCS=2.0/2,2,1/[a2122h-1b_1-5_1*OC_2*NCC/3=O_6*F][a2112h-1b_1-5]/1-2/a4-b1"
+    );
+}
+
+#[test]
+fn a_cyclodextrin_is_a_closed_ring() {
+    let (wurcs, iupac) = single_glycan(CYCLODEXTRIN_3CK7);
+    assert_eq!(
+        wurcs,
+        "WURCS=2.0/1,6,6/[a2122h-1a_1-5]/1-1-1-1-1-1/a4-b1_b4-c1_c4-d1_d4-e1_e4-f1_f4-a1"
+    );
+    // The closing linkage was dropped from the IUPAC.
+    assert_eq!(
+        iupac,
+        "4)Glc(a1-4)Glc(a1-4)Glc(a1-4)Glc(a1-4)Glc(a1-4)Glc(a1-"
+    );
+}
+
+#[test]
+fn residues_iupac_condensed_has_no_name_for_are_an_error() {
+    // FSW (a 2-Se-methyl-2-seleno-L-fucoside: C2 is not read through Se) and
+    // ZDC (a C-fucoside, read as a ketose) were written `Res41Me` and
+    // `Res7`.
+    for text in [SELENOFUCOSIDE_5H47, C_FUCOSIDE_5D2A] {
+        let reading = read_glycans_from_str(text, true, &PdbReadOptions::default()).unwrap();
+        assert_eq!(reading.glycans.len(), 1);
+        match write_iupac_condensed(&reading.glycans[0].graph) {
+            Err(IupacError::UnrepresentableInFormat { residue, .. }) => {
+                assert!(residue.contains("no IUPAC condensed name"), "{residue}");
+            }
+            other => panic!("expected an error, got {other:?}"),
+        }
     }
 }

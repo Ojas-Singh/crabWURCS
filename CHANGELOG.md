@@ -36,6 +36,25 @@ complexes) as mmCIF.
   again without its space-group and cell items, which the extractor does not
   use; any other parse error is still reported. A file whose space group or
   cell is unknown (`?`) is read without them at once (pdbtbx panicked).
+- **An anomer deposited as a second residue is read once.** Archive entries
+  model an α/β mixture as two residues on the same atoms (4D52: `GXL` 1316
+  and `GIV` 2316, both in alternative location A; 1AXZ: `GLA` 401 in A,
+  `GAL` 402 in B). Read together, their atoms bonded to each other: every
+  centre was unreadable (`Res4`) or the pair read as a 1-1-linked
+  disaccharide (`GalA(b1-1)Gal(a1-`). Of two HETATM residues with three or
+  more heavy atoms within 0.6 Å of each other, the one in the first
+  alternative location, then of higher occupancy, then first in the file is
+  read. This was the cause of the failing glycans with GXL/GIV (L-Gal now
+  reads as `L-Gal`) and with MAN, GAL, NAG, GLC, FUC and their anomers.
+- **Thioglycosides keep their sulfur.** A glycosidic bond through S or N is
+  a WURCS bridge (`*S*`, `*N*`): thiodigalactoside (1A78, `YIO`) is
+  `a1-b1*S*`, `Gal(b1-SH-1)Gal(b1-` (it read as an O-glycoside).
+- A terminal carbon with one N, S or F (6-amino-6-deoxy, 6-deoxy-6-fluoro,
+  a 6-S link) is a hydroxymethyl position carrying that group (`6*F`); it
+  was unreadable (`x`).
+- A cyclic glycan (a cyclodextrin) is rooted on its ring and its closing
+  linkage is marked cyclic, so IUPAC condensed keeps it (`4)Glc(a1-4)…`);
+  the closing linkage was dropped.
 - **IUPAC condensed never guesses a residue name.** A residue the registry
   does not name was written with a name guessed from its skeleton, which
   read back as another residue or not at all: `Res4`, `Res41Me`, `Res7`,
@@ -59,6 +78,9 @@ complexes) as mmCIF.
   (`A/ASN/81`) where they reported their root residue (`A/NAG/440`); so do
   PDB files with `LINK` records and no `CONECT` records, and files without
   any connection records.
+- Glycans with a residue deposited twice lose the duplicate; S- and
+  N-glycosidic bonds carry a bridge in WURCS (`a1-b1*S*`) and IUPAC
+  (`b1-SH-1`); cyclodextrins are written cyclic in IUPAC.
 - IUPAC condensed, IUPAC extended and GLYCAM of residues without a name (see
   above) are a `ConversionError` where a guessed name was written;
   phosphorylated residues are written (`Man6P(a1-`, GLYCAM `DManp[6P]`,
