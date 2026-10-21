@@ -12,10 +12,12 @@
 //! A residue whose name is a known sugar but whose ring atoms are missing is
 //! read from its name, as before.
 
+mod cif;
 mod geometry;
 mod names;
 mod reading;
 
+use cif::{AtomReference, ConnectionRecords};
 use crabwurcs_core::{
     CarbonPosition, Linkage, Modification, Monosaccharide, ResidueGraph, residue_from_kind,
 };
@@ -277,6 +279,10 @@ pub struct PdbResidueReference {
 
 #[derive(Debug, Clone)]
 pub struct ExtractedGlycan {
+    /// `chain/residue/number` of the residue the glycan is attached to: the
+    /// one an explicit record (`LINK`, `CONECT`, mmCIF `_struct_conn`) bonds
+    /// it to, or, in a file that records no connections, the one bonded by
+    /// distance to the anomeric carbon of its root; otherwise its root.
     pub attachment_site: Option<String>,
     pub graph: ResidueGraph,
 }
@@ -286,6 +292,7 @@ pub struct ExtractedGlycan {
 /// callers that only need the graph.
 #[derive(Debug, Clone)]
 pub struct ExtractedGlycanWithProvenance {
+    /// As [`ExtractedGlycan::attachment_site`].
     pub attachment_site: Option<String>,
     pub graph: ResidueGraph,
     pub residues: Vec<PdbResidueReference>,
@@ -394,18 +401,12 @@ pub fn read_glycans_from_file(
             extension.eq_ignore_ascii_case("cif") || extension.eq_ignore_ascii_case("mmcif")
         });
     if mmcif_extension {
-        use pdbtbx::ReadOptions;
-
-        let path_str = path.to_string_lossy();
-        let (pdb, _errors) = ReadOptions::default()
-            .set_level(pdbtbx::StrictnessLevel::Loose)
-            .set_only_first_model(true)
-            .read(path_str.as_ref())
-            .map_err(|e| PdbError::ParseError(format!("cannot parse file: {:?}", e)))?;
+        let pdb = parse_structure(&contents, true, "cannot parse file")?;
         return read_structure(
             &pdb,
             &raw_pdb_residue_names(&contents),
             &raw_pdb_bonds(&contents),
+            &cif::mmcif_connections(&contents),
             options,
         );
     }
@@ -420,9 +421,6 @@ pub fn read_glycans_from_str(
     is_mmcif: bool,
     options: &PdbReadOptions,
 ) -> PdbResult<PdbReading> {
-    use pdbtbx::{Format, ReadOptions, StrictnessLevel};
-    use std::io::BufReader;
-
     let filtered;
     let contents = if is_mmcif {
         contents
@@ -430,20 +428,69 @@ pub fn read_glycans_from_str(
         filtered = pdb_records_used(contents);
         filtered.as_str()
     };
-    let format = if is_mmcif { Format::Mmcif } else { Format::Pdb };
-    let reader = BufReader::new(contents.as_bytes());
-    let (pdb, _errors) = ReadOptions::default()
-        .set_level(StrictnessLevel::Loose)
-        .set_format(format)
-        .set_only_first_model(true)
-        .read_raw(reader)
-        .map_err(|e| PdbError::ParseError(format!("cannot parse: {:?}", e)))?;
+    let pdb = parse_structure(contents, is_mmcif, "cannot parse")?;
+    let connections = if is_mmcif {
+        cif::mmcif_connections(contents)
+    } else {
+        cif::pdb_connections(contents)
+    };
     read_structure(
         &pdb,
         &raw_pdb_residue_names(contents),
         &raw_pdb_bonds(contents),
+        &connections,
         options,
     )
+}
+
+/// Parse with pdbtbx, first model only. The extractor uses no crystal
+/// items, so an mmCIF file whose space-group items disagree (archive entries
+/// such as 31NP state an H-M symbol and a Hall symbol that pdbtbx reads as
+/// different groups) is read again without them, and one with an unknown
+/// (`?`) space group or cell is read without them at once (pdbtbx would
+/// panic). Any other error, and any error that remains on the second
+/// reading, is reported.
+fn parse_structure(contents: &str, is_mmcif: bool, context: &str) -> PdbResult<pdbtbx::PDB> {
+    use pdbtbx::{Format, ReadOptions, StrictnessLevel};
+    use std::io::BufReader;
+
+    let read = |text: &str| {
+        ReadOptions::default()
+            .set_level(StrictnessLevel::Loose)
+            .set_format(if is_mmcif { Format::Mmcif } else { Format::Pdb })
+            .set_only_first_model(true)
+            .read_raw(BufReader::new(text.as_bytes()))
+            .map(|(pdb, _warnings)| pdb)
+    };
+    let error =
+        |errors: Vec<pdbtbx::PDBError>| PdbError::ParseError(format!("{context}: {:?}", errors));
+    if is_mmcif
+        && cif::has_unknown_crystal_item(contents)
+        && let Some(stripped) = cif::without_crystal_items(contents)
+    {
+        return read(&stripped).map_err(error);
+    }
+    match read(contents) {
+        Ok(pdb) => Ok(pdb),
+        Err(errors) if is_mmcif && only_space_group_mismatches(&errors) => {
+            match cif::without_crystal_items(contents) {
+                Some(stripped) => read(&stripped).map_err(error),
+                None => Err(error(errors)),
+            }
+        }
+        Err(errors) => Err(error(errors)),
+    }
+}
+
+/// Whether every error that stops a loose reading is pdbtbx's space-group
+/// mismatch.
+fn only_space_group_mismatches(errors: &[pdbtbx::PDBError]) -> bool {
+    let mut failing = errors
+        .iter()
+        .filter(|error| error.fails(pdbtbx::StrictnessLevel::Loose))
+        .peekable();
+    failing.peek().is_some()
+        && failing.all(|error| error.short_description() == "Space group does not match")
 }
 
 fn raw_pdb_bonds(contents: &str) -> Vec<(usize, usize)> {
@@ -540,10 +587,28 @@ struct Link {
     child_position: u8,
 }
 
+/// Residues that never name an attachment perceived from distances: water,
+/// GLYCAM's reducing-end hydroxyl and its O-substituent residues.
+const NOT_AN_AGLYCONE: [&str; 12] = [
+    "HOH", "WAT", "DOD", "H2O", "TIP", "TIP3", "SOL", "ROH", "SO3", "MEX", "ACX", "PCX",
+];
+
+/// Longest distance (Å) from an anomeric carbon to an atom of another residue
+/// read as a bond to an aglycone when the file records no connections: a
+/// C–N, C–O or C–C single bond is 1.43–1.54 Å, a C–S one 1.82 Å.
+fn attachment_distance(element: &str) -> Option<f64> {
+    match element {
+        "N" | "O" | "C" => Some(1.75),
+        "S" => Some(2.0),
+        _ => None,
+    }
+}
+
 fn read_structure(
     pdb: &pdbtbx::PDB,
     raw_names: &HashMap<(isize, String), String>,
     raw_bonds: &[(usize, usize)],
+    connections: &ConnectionRecords,
     options: &PdbReadOptions,
 ) -> PdbResult<PdbReading> {
     // Atoms of the first model; of alternative locations, the atoms without
@@ -554,6 +619,7 @@ fn read_structure(
     let mut atoms: Vec<StructureAtom> = Vec::new();
     let mut atom_index: HashMap<usize, usize> = HashMap::new();
     let mut atoms_by_serial: HashMap<usize, usize> = HashMap::new();
+    let mut atoms_by_reference: HashMap<AtomReference, usize> = HashMap::new();
     let mut seen_names: HashSet<(usize, String)> = HashSet::new();
     for hierarchy in pdb.atoms_with_hierarchy() {
         let residue = hierarchy.residue();
@@ -598,6 +664,16 @@ fn read_structure(
         atoms_by_serial
             .entry(atom.serial_number())
             .or_insert(atoms.len());
+        let (sequence, insertion_code) = residue.id();
+        atoms_by_reference
+            .entry(AtomReference {
+                chain: hierarchy.chain().id().to_string(),
+                sequence,
+                insertion_code: insertion_code.map(str::to_string),
+                residue: conformer.name().to_ascii_uppercase(),
+                atom: atom.name().to_string(),
+            })
+            .or_insert(atoms.len());
         atoms.push(StructureAtom {
             residue: index,
             name: atom.name().to_string(),
@@ -619,6 +695,15 @@ fn read_structure(
         if let (Some(first), Some(second)) =
             (atoms_by_serial.get(&first), atoms_by_serial.get(&second))
         {
+            explicit.push((*first, *second));
+        }
+    }
+    // `_struct_conn` and `LINK`, which pdbtbx does not read.
+    for (first, second) in &connections.covalent {
+        if let (Some(first), Some(second)) = (
+            atoms_by_reference.get(first),
+            atoms_by_reference.get(second),
+        ) {
             explicit.push((*first, *second));
         }
     }
@@ -691,9 +776,9 @@ fn read_structure(
     // Read every ring unit: carbons, substituents, linkage, aglycone.
     let mut coordinate_readings: HashMap<usize, CoordinateReading> = HashMap::new();
     let mut links: Vec<Link> = Vec::new();
-    // The attachment site is the residue an explicit record (CONECT, LINK)
-    // bonds the glycan to, as before; a contact perceived from distances
-    // never names it.
+    // The attachment site is the residue an explicit record (CONECT, LINK,
+    // `_struct_conn`) bonds the glycan to; a contact perceived from
+    // distances names it only in a file that records no connections.
     let explicit_bonds = explicit
         .iter()
         .map(|&(first, second)| (first.min(second), first.max(second)))
@@ -884,9 +969,13 @@ fn read_structure(
     links.extend(name_only.links());
     let name_substituents = name_only.substituents();
     // Residues bonded by an explicit record to a glycan residue, other than
-    // glycan residues and its substituents.
+    // glycan residues and its substituents. A record the bond graph did not
+    // take (a metal coordination, atoms more than 3 Å apart) names none.
     let mut explicit_attachments: HashMap<usize, usize> = HashMap::new();
     for &(first, second) in &explicit {
+        if !structure.neighbors[first].contains(&second) {
+            continue;
+        }
         let (first_residue, second_residue) = (
             structure.atoms[first].residue,
             structure.atoms[second].residue,
@@ -904,6 +993,52 @@ fn read_structure(
             }
         }
     }
+
+    // A file that records no covalent connection between residues (a model
+    // written without `LINK` or `_struct_conn`): the residue whose atom is
+    // bonded, by distance, to the anomeric carbon of a glycan's reducing
+    // end, or to its anomeric heteroatom, is its aglycone (an ASN ND2, SER
+    // OG, THR OG1, HYP OD1, TRP CD1 of a C-mannoside, a ligand). Glycan
+    // residues, their substituents, water and GLYCAM's `ROH` are none.
+    let perceived_attachment = |unit_index: usize| -> Option<usize> {
+        let unit = &units[unit_index];
+        let carbon = unit.ring.as_ref()?.anomeric_carbon();
+        let candidate = |from: usize, atom: usize, elements: &[&str]| {
+            let other = &structure.atoms[atom];
+            let residue = other.residue;
+            let limit = attachment_distance(&other.element)?;
+            let distance = geometry::distance(structure.atoms[from].position, other.position);
+            (residue != unit.residue
+                && elements.contains(&other.element.as_str())
+                && distance <= limit
+                && !unit_of_residue.contains_key(&residue)
+                && !substituent_residues.contains(&residue)
+                && !NOT_AN_AGLYCONE.contains(&residues[residue].name.to_ascii_uppercase().as_str()))
+            .then_some((distance, residue))
+        };
+        let direct = structure
+            .heavy_neighbors(carbon)
+            .filter_map(|atom| candidate(carbon, atom, &["N", "O", "S", "C"]));
+        let through_oxygen = structure
+            .heavy_neighbors(carbon)
+            .filter(|atom| {
+                structure.atoms[*atom].residue == unit.residue
+                    && matches!(structure.atoms[*atom].element.as_str(), "O" | "N" | "S")
+                    && !unit
+                        .ring
+                        .as_ref()
+                        .is_some_and(|ring| ring.ring.contains(atom))
+            })
+            .flat_map(|heteroatom| {
+                structure
+                    .heavy_neighbors(heteroatom)
+                    .filter_map(move |atom| candidate(heteroatom, atom, &["C"]))
+            });
+        direct
+            .chain(through_oxygen)
+            .min_by(|left, right| left.0.total_cmp(&right.0))
+            .map(|(_, residue)| residue)
+    };
 
     // A child has one parent.
     links.sort_unstable();
@@ -1022,6 +1157,12 @@ fn read_structure(
                     .iter()
                     .find_map(|unit| explicit_attachments.get(&units[*unit].residue))
                     .map(|residue| residues[*residue].site())
+            })
+            .or_else(|| {
+                (!connections.any)
+                    .then(|| perceived_attachment(root))
+                    .flatten()
+                    .map(|residue| residues[residue].site())
             })
             .or_else(|| Some(residues[units[root].residue].site()));
         reading.glycans.push(ExtractedGlycanWithProvenance {

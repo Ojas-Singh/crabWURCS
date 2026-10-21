@@ -33,10 +33,12 @@ coordinates alone:
   (GLYCAM keeps sulfates in `SO3` residues).
 
 Bonds are perceived from distances within each atom's valence (bonds inside a
-residue first, then explicit `CONECT`/`LINK` records, then contacts between
-residues), so a clash between residues does not break a ring. Metal ions are
-never bonded. wwPDB Chemical Component Dictionary coordinates of 49 components
-fix the conventions in the test suite.
+residue first, then explicit records, then contacts between residues), so a
+clash between residues does not break a ring. Explicit records are PDB
+`CONECT` and `LINK` records and mmCIF `_struct_conn` rows of type `covale*`
+(metal coordination, hydrogen bonds and bonds to a symmetry mate are left
+out). Metal ions are never bonded. wwPDB Chemical Component Dictionary
+coordinates of 49 components fix the conventions in the test suite.
 
 ## Names are hints
 
@@ -71,11 +73,35 @@ returns a `PdbReading` with `glycans`, `warnings` and `residues`; the
 PDB text is read from the records the extractor uses: the `ATOM`/`HETATM`
 records of the first model and the `CONECT` and `LINK` records. Free-text
 records (such as banner `REMARK` lines) and later models are skipped. Of an
-mmCIF file, the first model is read. Of alternative locations, the atoms
-without one and those of the first are read.
+mmCIF file, the first model and the `_struct_conn` rows are read. Of
+alternative locations, the atoms without one and those of the first are
+read. Gzipped files are not read; decompress them first.
 
-The attachment site is the residue an explicit `CONECT` or `LINK` record bonds
-the glycan to (the bond at the root's anomeric atom first; never a substituent
-residue such as `SO3`), otherwise the root residue. Insertion codes are
-retained. PDB/mmCIF writing, conformer generation, and coordinate optimization
-are intentionally outside the 0.3 scope.
+Crystal items are not used. An mmCIF file whose space-group items disagree
+(archive entries such as 31NP state an H-M symbol and a Hall symbol that
+pdbtbx reads as different groups) is read again without its space-group and
+cell items, as is one whose space group or cell is unknown (`?`); any other
+parse error is reported.
+
+## Attachment site
+
+`attachment_site` (`chain/residue/number`) is, in this order:
+
+1. the residue an explicit record bonds to the anomeric atom of the glycan's
+   root: the asparagine of an N-glycan, the serine or threonine of an
+   O-glycan, the tryptophan of a C-mannoside, an aglycone ligand;
+2. any other residue an explicit record bonds to a glycan residue, unless
+   the bond graph did not take the record (a metal coordination, atoms more
+   than 3 Å apart);
+3. when the file records no covalent connection at all (no `LINK` record, no
+   `covale` `_struct_conn` row, as in models written by modelling and
+   simulation programs), the residue whose N, O, S or C atom is bonded, by
+   distance, to the anomeric carbon of the root (within 1.75 Å; 2.0 Å for
+   S), or whose carbon is bonded to the root's anomeric heteroatom. Water and
+   GLYCAM's `ROH` (a free reducing end) are never an attachment; a file that
+   records its connections is never second-guessed from distances;
+4. otherwise the root residue itself.
+
+Substituent residues (`SO3`, `MEX`, `ACX`, `PCX`) are never the attachment
+site. Insertion codes are retained. PDB/mmCIF writing, conformer generation,
+and coordinate optimization are intentionally outside the 0.3 scope.

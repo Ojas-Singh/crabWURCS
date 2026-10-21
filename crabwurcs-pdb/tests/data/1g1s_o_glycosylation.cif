@@ -1,0 +1,147 @@
+data_1G1S
+# Part of PDB entry 1G1S (https://files.rcsb.org/download/1G1S.cif, wwPDB archive copy downloaded 2026-10-20,
+# SHA-256 62cc851cf3151e7b426ae11f05362c731826ff5ea9a4d005c533a2f6da684587): the _struct_conn loop and
+# the _atom_site records of THR C616 and the GalNAc E1 on its OG1 (author numbering).
+# Regenerate with: awk '/^_struct_conn\./{f=1} f&&/^#/{f=0} f{c=c $0 "\n"} /^_atom_site\./{h=h $0 "\n"} /^(ATOM|HETATM)/ && ($19 $17=="C616"||$19 $17=="E1"){r=r $0 "\n"} END{printf "loop_\n%s#\nloop_\n%s%s", c, h, r}' 1G1S.cif
+loop_
+_struct_conn.id 
+_struct_conn.conn_type_id 
+_struct_conn.pdbx_leaving_atom_flag 
+_struct_conn.pdbx_PDB_id 
+_struct_conn.ptnr1_label_asym_id 
+_struct_conn.ptnr1_label_comp_id 
+_struct_conn.ptnr1_label_seq_id 
+_struct_conn.ptnr1_label_atom_id 
+_struct_conn.pdbx_ptnr1_label_alt_id 
+_struct_conn.pdbx_ptnr1_PDB_ins_code 
+_struct_conn.pdbx_ptnr1_standard_comp_id 
+_struct_conn.ptnr1_symmetry 
+_struct_conn.ptnr2_label_asym_id 
+_struct_conn.ptnr2_label_comp_id 
+_struct_conn.ptnr2_label_seq_id 
+_struct_conn.ptnr2_label_atom_id 
+_struct_conn.pdbx_ptnr2_label_alt_id 
+_struct_conn.pdbx_ptnr2_PDB_ins_code 
+_struct_conn.ptnr1_auth_asym_id 
+_struct_conn.ptnr1_auth_comp_id 
+_struct_conn.ptnr1_auth_seq_id 
+_struct_conn.ptnr2_auth_asym_id 
+_struct_conn.ptnr2_auth_comp_id 
+_struct_conn.ptnr2_auth_seq_id 
+_struct_conn.ptnr2_symmetry 
+_struct_conn.pdbx_ptnr3_label_atom_id 
+_struct_conn.pdbx_ptnr3_label_seq_id 
+_struct_conn.pdbx_ptnr3_label_comp_id 
+_struct_conn.pdbx_ptnr3_label_asym_id 
+_struct_conn.pdbx_ptnr3_label_alt_id 
+_struct_conn.pdbx_ptnr3_PDB_ins_code 
+_struct_conn.details 
+_struct_conn.pdbx_dist_value 
+_struct_conn.pdbx_value_order 
+_struct_conn.pdbx_role 
+disulf1  disulf ?    ? A CYS 19  SG  ? ? ? 1_555 A CYS 117 SG  ? ? A CYS 19  A CYS 117 1_555 ? ? ? ? ? ? ? 2.058 ?    ? 
+disulf2  disulf ?    ? A CYS 90  SG  ? ? ? 1_555 A CYS 109 SG  ? ? A CYS 90  A CYS 109 1_555 ? ? ? ? ? ? ? 2.043 ?    ? 
+disulf3  disulf ?    ? A CYS 122 SG  ? ? ? 1_555 A CYS 133 SG  ? ? A CYS 122 A CYS 133 1_555 ? ? ? ? ? ? ? 2.057 ?    ? 
+disulf4  disulf ?    ? A CYS 127 SG  ? ? ? 1_555 A CYS 142 SG  ? ? A CYS 127 A CYS 142 1_555 ? ? ? ? ? ? ? 2.055 ?    ? 
+disulf5  disulf ?    ? A CYS 144 SG  ? ? ? 1_555 A CYS 153 SG  ? ? A CYS 144 A CYS 153 1_555 ? ? ? ? ? ? ? 2.086 ?    ? 
+disulf6  disulf ?    ? B CYS 19  SG  ? ? ? 1_555 B CYS 117 SG  ? ? B CYS 19  B CYS 117 1_555 ? ? ? ? ? ? ? 2.065 ?    ? 
+disulf7  disulf ?    ? B CYS 90  SG  ? ? ? 1_555 B CYS 109 SG  ? ? B CYS 90  B CYS 109 1_555 ? ? ? ? ? ? ? 2.051 ?    ? 
+disulf8  disulf ?    ? B CYS 122 SG  ? ? ? 1_555 B CYS 133 SG  ? ? B CYS 122 B CYS 133 1_555 ? ? ? ? ? ? ? 2.046 ?    ? 
+disulf9  disulf ?    ? B CYS 127 SG  ? ? ? 1_555 B CYS 142 SG  ? ? B CYS 127 B CYS 142 1_555 ? ? ? ? ? ? ? 2.047 ?    ? 
+disulf10 disulf ?    ? B CYS 144 SG  ? ? ? 1_555 B CYS 153 SG  ? ? B CYS 144 B CYS 153 1_555 ? ? ? ? ? ? ? 2.082 ?    ? 
+covale1  covale both ? C GLU 6   C   ? ? ? 1_555 C TYS 7   N   ? ? C GLU 606 C TYS 607 1_555 ? ? ? ? ? ? ? 1.328 ?    ? 
+covale2  covale both ? C TYS 7   C   ? ? ? 1_555 C LEU 8   N   ? ? C TYS 607 C LEU 608 1_555 ? ? ? ? ? ? ? 1.330 ?    ? 
+covale3  covale both ? C ASP 9   C   ? ? ? 1_555 C TYS 10  N   ? ? C ASP 609 C TYS 610 1_555 ? ? ? ? ? ? ? 1.328 ?    ? 
+covale4  covale both ? C TYS 10  C   ? ? ? 1_555 C ASP 11  N   ? ? C TYS 610 C ASP 611 1_555 ? ? ? ? ? ? ? 1.322 ?    ? 
+covale5  covale one  ? C THR 16  OG1 ? ? ? 1_555 E NGA .   C1  ? ? C THR 616 E NGA 1   1_555 ? ? ? ? ? ? ? 1.427 ?    
+O-Glycosylation 
+covale6  covale both ? D TYS 5   C   ? ? ? 1_555 D GLU 6   N   ? ? D TYS 605 D GLU 606 1_555 ? ? ? ? ? ? ? 1.332 ?    ? 
+covale7  covale both ? D GLU 6   C   ? ? ? 1_555 D TYS 7   N   ? ? D GLU 606 D TYS 607 1_555 ? ? ? ? ? ? ? 1.315 ?    ? 
+covale8  covale both ? D TYS 7   C   ? ? ? 1_555 D LEU 8   N   ? ? D TYS 607 D LEU 608 1_555 ? ? ? ? ? ? ? 1.331 ?    ? 
+covale9  covale both ? D ASP 9   C   ? ? ? 1_555 D TYS 10  N   ? ? D ASP 609 D TYS 610 1_555 ? ? ? ? ? ? ? 1.327 ?    ? 
+covale10 covale both ? D TYS 10  C   ? ? ? 1_555 D ASP 11  N   ? ? D TYS 610 D ASP 611 1_555 ? ? ? ? ? ? ? 1.328 ?    ? 
+covale11 covale one  ? D THR 16  OG1 ? ? ? 1_555 F NGA .   C1  ? ? D THR 616 F NGA 1   1_555 ? ? ? ? ? ? ? 1.427 ?    
+O-Glycosylation 
+covale12 covale both ? E NGA .   O6  ? ? ? 1_555 E NAG .   C1  ? ? E NGA 1   E NAG 2   1_555 ? ? ? ? ? ? ? 1.397 sing ? 
+covale13 covale both ? E NGA .   O3  ? ? ? 1_555 E GAL .   C1  ? ? E NGA 1   E GAL 6   1_555 ? ? ? ? ? ? ? 1.411 ?    ? 
+covale14 covale both ? E NAG .   O4  ? ? ? 1_555 E GAL .   C1  ? ? E NAG 2   E GAL 3   1_555 ? ? ? ? ? ? ? 1.393 ?    ? 
+covale15 covale both ? E NAG .   O3  ? ? ? 1_555 E FUC .   C1  ? ? E NAG 2   E FUC 5   1_555 ? ? ? ? ? ? ? 1.423 ?    ? 
+covale16 covale both ? E GAL .   O3  ? ? ? 1_555 E SIA .   C2  ? ? E GAL 3   E SIA 4   1_555 ? ? ? ? ? ? ? 1.436 ?    ? 
+covale17 covale both ? F NGA .   O6  ? ? ? 1_555 F NAG .   C1  ? ? F NGA 1   F NAG 2   1_555 ? ? ? ? ? ? ? 1.380 sing ? 
+covale18 covale both ? F NGA .   O3  ? ? ? 1_555 F GAL .   C1  ? ? F NGA 1   F GAL 6   1_555 ? ? ? ? ? ? ? 1.400 ?    ? 
+covale19 covale both ? F NAG .   O4  ? ? ? 1_555 F GAL .   C1  ? ? F NAG 2   F GAL 3   1_555 ? ? ? ? ? ? ? 1.390 ?    ? 
+covale20 covale both ? F NAG .   O3  ? ? ? 1_555 F FUC .   C1  ? ? F NAG 2   F FUC 5   1_555 ? ? ? ? ? ? ? 1.404 ?    ? 
+covale21 covale both ? F GAL .   O3  ? ? ? 1_555 F SIA .   C2  ? ? F GAL 3   F SIA 4   1_555 ? ? ? ? ? ? ? 1.451 ?    ? 
+metalc1  metalc ?    ? A GLU 80  OE1 ? ? ? 1_555 G SR  .   SR  ? ? A GLU 80  A SR  901 1_555 ? ? ? ? ? ? ? 2.849 ?    ? 
+metalc2  metalc ?    ? A ASN 82  OD1 ? ? ? 1_555 G SR  .   SR  ? ? A ASN 82  A SR  901 1_555 ? ? ? ? ? ? ? 2.582 ?    ? 
+metalc3  metalc ?    ? A GLU 88  OE1 ? ? ? 1_555 G SR  .   SR  ? ? A GLU 88  A SR  901 1_555 ? ? ? ? ? ? ? 2.600 ?    ? 
+metalc4  metalc ?    ? A ASN 105 OD1 ? ? ? 1_555 G SR  .   SR  ? ? A ASN 105 A SR  901 1_555 ? ? ? ? ? ? ? 2.544 ?    ? 
+metalc5  metalc ?    ? A ASP 106 O   ? ? ? 1_555 G SR  .   SR  ? ? A ASP 106 A SR  901 1_555 ? ? ? ? ? ? ? 2.541 ?    ? 
+metalc6  metalc ?    ? A ASP 106 OD1 ? ? ? 1_555 G SR  .   SR  ? ? A ASP 106 A SR  901 1_555 ? ? ? ? ? ? ? 2.325 ?    ? 
+metalc7  metalc ?    ? G SR  .   SR  ? ? ? 1_555 F FUC .   O3  ? ? A SR  901 F FUC 5   1_555 ? ? ? ? ? ? ? 2.505 ?    ? 
+metalc8  metalc ?    ? G SR  .   SR  ? ? ? 1_555 F FUC .   O4  ? ? A SR  901 F FUC 5   1_555 ? ? ? ? ? ? ? 2.760 ?    ? 
+metalc9  metalc ?    ? B GLU 80  OE1 ? ? ? 1_555 J SR  .   SR  ? ? B GLU 80  B SR  902 1_555 ? ? ? ? ? ? ? 2.651 ?    ? 
+metalc10 metalc ?    ? B ASN 82  OD1 ? ? ? 1_555 J SR  .   SR  ? ? B ASN 82  B SR  902 1_555 ? ? ? ? ? ? ? 2.601 ?    ? 
+metalc11 metalc ?    ? B GLU 88  OE1 ? ? ? 1_555 J SR  .   SR  ? ? B GLU 88  B SR  902 1_555 ? ? ? ? ? ? ? 2.583 ?    ? 
+metalc12 metalc ?    ? B ASN 105 OD1 ? ? ? 1_555 J SR  .   SR  ? ? B ASN 105 B SR  902 1_555 ? ? ? ? ? ? ? 2.537 ?    ? 
+metalc13 metalc ?    ? B ASP 106 O   ? ? ? 1_555 J SR  .   SR  ? ? B ASP 106 B SR  902 1_555 ? ? ? ? ? ? ? 2.546 ?    ? 
+metalc14 metalc ?    ? B ASP 106 OD1 ? ? ? 1_555 J SR  .   SR  ? ? B ASP 106 B SR  902 1_555 ? ? ? ? ? ? ? 2.221 ?    ? 
+metalc15 metalc ?    ? J SR  .   SR  ? ? ? 1_555 E FUC .   O3  ? ? B SR  902 E FUC 5   1_555 ? ? ? ? ? ? ? 2.558 ?    ? 
+metalc16 metalc ?    ? J SR  .   SR  ? ? ? 1_555 E FUC .   O4  ? ? B SR  902 E FUC 5   1_555 ? ? ? ? ? ? ? 2.725 ?    ? 
+metalc17 metalc ?    ? K NA  .   NA  ? ? ? 1_555 S HOH .   O   ? ? B NA  903 B HOH 954 1_555 ? ? ? ? ? ? ? 2.356 ?    ? 
+metalc18 metalc ?    ? K NA  .   NA  ? ? ? 1_555 U HOH .   O   ? ? B NA  903 D HOH 201 7_645 ? ? ? ? ? ? ? 2.276 ?    ? 
+metalc19 metalc ?    ? K NA  .   NA  ? ? ? 1_555 U HOH .   O   ? ? B NA  903 D HOH 202 7_645 ? ? ? ? ? ? ? 2.185 ?    ? 
+metalc20 metalc ?    ? K NA  .   NA  ? ? ? 1_555 U HOH .   O   ? ? B NA  903 D HOH 203 7_645 ? ? ? ? ? ? ? 2.489 ?    ? 
+metalc21 metalc ?    ? K NA  .   NA  ? ? ? 1_555 D ASP 9   OD1 ? ? B NA  903 D ASP 609 7_645 ? ? ? ? ? ? ? 2.535 ?    ? 
+metalc22 metalc ?    ? K NA  .   NA  ? ? ? 1_555 D ASP 9   OD2 ? ? B NA  903 D ASP 609 7_645 ? ? ? ? ? ? ? 2.484 ?    ? 
+metalc23 metalc ?    ? T HOH .   O   ? ? ? 1_555 Q NA  .   NA  ? ? C HOH 55  C NA  904 1_555 ? ? ? ? ? ? ? 2.219 ?    ? 
+metalc24 metalc ?    ? T HOH .   O   ? ? ? 1_555 Q NA  .   NA  ? ? C HOH 185 C NA  904 1_555 ? ? ? ? ? ? ? 2.410 ?    ? 
+metalc25 metalc ?    ? T HOH .   O   ? ? ? 1_555 Q NA  .   NA  ? ? C HOH 199 C NA  904 1_555 ? ? ? ? ? ? ? 2.181 ?    ? 
+metalc26 metalc ?    ? T HOH .   O   ? ? ? 1_555 Q NA  .   NA  ? ? C HOH 200 C NA  904 1_555 ? ? ? ? ? ? ? 2.477 ?    ? 
+metalc27 metalc ?    ? C ASP 9   OD1 ? ? ? 1_555 Q NA  .   NA  ? ? C ASP 609 C NA  904 1_555 ? ? ? ? ? ? ? 2.456 ?    ? 
+metalc28 metalc ?    ? C ASP 9   OD2 ? ? ? 1_555 Q NA  .   NA  ? ? C ASP 609 C NA  904 1_555 ? ? ? ? ? ? ? 2.394 ?    ? 
+metalc29 metalc ?    ? C ASP 11  OD2 ? ? ? 1_555 Q NA  .   NA  ? ? C ASP 611 C NA  904 1_555 ? ? ? ? ? ? ? 2.706 ?    ? 
+#
+loop_
+_atom_site.group_PDB 
+_atom_site.id 
+_atom_site.type_symbol 
+_atom_site.label_atom_id 
+_atom_site.label_alt_id 
+_atom_site.label_comp_id 
+_atom_site.label_asym_id 
+_atom_site.label_entity_id 
+_atom_site.label_seq_id 
+_atom_site.pdbx_PDB_ins_code 
+_atom_site.Cartn_x 
+_atom_site.Cartn_y 
+_atom_site.Cartn_z 
+_atom_site.occupancy 
+_atom_site.B_iso_or_equiv 
+_atom_site.pdbx_formal_charge 
+_atom_site.auth_seq_id 
+_atom_site.auth_comp_id 
+_atom_site.auth_asym_id 
+_atom_site.auth_atom_id 
+_atom_site.pdbx_PDB_model_num 
+ATOM   2664 N  N   . THR C 2 16  ? 64.597 60.857  63.429  1.00 42.51 ? 616 THR C N   1 
+ATOM   2665 C  CA  . THR C 2 16  ? 65.898 61.369  63.002  1.00 47.71 ? 616 THR C CA  1 
+ATOM   2666 C  C   . THR C 2 16  ? 66.565 60.377  62.059  1.00 50.94 ? 616 THR C C   1 
+ATOM   2667 O  O   . THR C 2 16  ? 66.258 59.185  62.086  1.00 48.41 ? 616 THR C O   1 
+ATOM   2668 C  CB  . THR C 2 16  ? 66.781 61.593  64.214  1.00 47.74 ? 616 THR C CB  1 
+ATOM   2669 O  OG1 . THR C 2 16  ? 66.902 60.337  64.858  1.00 42.78 ? 616 THR C OG1 1 
+ATOM   2670 C  CG2 . THR C 2 16  ? 66.155 62.613  65.182  1.00 41.26 ? 616 THR C CG2 1 
+HETATM 2815 C  C1  . NGA E 3 .   ? 68.230 59.885  65.122  1.00 53.47 ? 1   NGA E C1  1 
+HETATM 2816 C  C2  . NGA E 3 .   ? 68.223 58.368  65.378  1.00 52.33 ? 1   NGA E C2  1 
+HETATM 2817 C  C3  . NGA E 3 .   ? 67.423 58.041  66.654  1.00 56.39 ? 1   NGA E C3  1 
+HETATM 2818 C  C4  . NGA E 3 .   ? 67.981 58.856  67.860  1.00 54.69 ? 1   NGA E C4  1 
+HETATM 2819 C  C5  . NGA E 3 .   ? 67.956 60.360  67.506  1.00 50.46 ? 1   NGA E C5  1 
+HETATM 2820 C  C6  . NGA E 3 .   ? 68.503 61.254  68.602  1.00 50.50 ? 1   NGA E C6  1 
+HETATM 2821 C  C7  . NGA E 3 .   ? 68.258 56.711  63.557  1.00 63.04 ? 1   NGA E C7  1 
+HETATM 2822 C  C8  . NGA E 3 .   ? 67.462 56.171  62.372  1.00 62.77 ? 1   NGA E C8  1 
+HETATM 2823 N  N2  . NGA E 3 .   ? 67.638 57.709  64.215  1.00 60.02 ? 1   NGA E N2  1 
+HETATM 2824 O  O3  . NGA E 3 .   ? 67.484 56.644  66.923  1.00 59.36 ? 1   NGA E O3  1 
+HETATM 2825 O  O4  . NGA E 3 .   ? 69.323 58.495  68.127  1.00 54.39 ? 1   NGA E O4  1 
+HETATM 2826 O  O5  . NGA E 3 .   ? 68.721 60.558  66.288  1.00 51.34 ? 1   NGA E O5  1 
+HETATM 2827 O  O6  . NGA E 3 .   ? 68.346 62.596  68.192  1.00 52.37 ? 1   NGA E O6  1 
+HETATM 2828 O  O7  . NGA E 3 .   ? 69.349 56.241  63.835  1.00 62.79 ? 1   NGA E O7  1 

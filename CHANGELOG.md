@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+Fixes found by reading 2,891 wwPDB archive entries (lectin–glycan
+complexes) as mmCIF.
+
+- **mmCIF covalent connections are read.** pdbtbx reads neither mmCIF
+  `_struct_conn` nor PDB `LINK` records, so in an mmCIF file the attachment
+  site of every glycan fell back to its root residue (1EO8: `A/NAG/440` for
+  the N-glycan on `A/ASN/81`), and a PDB file with `LINK` but no `CONECT`
+  records lost the same bonds. `_struct_conn` rows of type `covale*` and
+  `LINK` records are now explicit bonds, matched to atoms by author chain,
+  sequence number, insertion code, residue and atom name (label identifiers
+  when the author ones are absent); connections to a symmetry mate are left
+  out. Archive mmCIF and PDB files of an entry give the same glycans and
+  sites. Glycans whose glycosidic bonds are too long to perceive from
+  distances, but recorded, are no longer split (1GUI, 1FZC, 6B3M).
+- **Attachment sites from distances when a file records no connections.** In
+  a file without any `LINK` record or `covale` `_struct_conn` row (models
+  from modelling and simulation programs), the attachment site is the
+  residue bonded by distance to the anomeric carbon of the glycan's root (N,
+  O, S or C within 1.75 Å, S within 2.0 Å: an Asn ND2, Ser OG, Thr OG1, Hyp
+  OD1, the Trp CD1 of a C-mannoside, a ligand), or whose carbon is bonded to
+  its anomeric heteroatom. Water and GLYCAM's `ROH` are never a site. A file
+  that records its connections is never second-guessed.
+- **A metal coordination is no attachment.** A `CONECT` or `LINK` record of
+  a metal ion bonded to a sugar oxygen named the ion as the site (1K9I:
+  `A/CA/406` for the pentasaccharide that coordinates the calcium of
+  DC-SIGN); only records the bond graph takes (two organic atoms within
+  3 Å) name a site.
+- **Archive mmCIF files with inconsistent space-group items are read.** 140
+  of the 2,891 entries failed with `InvalidatingError: Space group does not
+  match` (31NP: `_symmetry.space_group_name_H-M 'I 1 2 1'` with
+  `_symmetry.space_group_name_Hall 'C 2y (x,y,-x+z)'`). Such a file is read
+  again without its space-group and cell items, which the extractor does not
+  use; any other parse error is still reported. A file whose space group or
+  cell is unknown (`?`) is read without them at once (pdbtbx panicked).
+
+### Output changes
+
+- mmCIF glycans attached to a protein report the protein residue
+  (`A/ASN/81`) where they reported their root residue (`A/NAG/440`); so do
+  PDB files with `LINK` records and no `CONECT` records, and files without
+  any connection records.
+
 ## 0.3.3 - 2026-10-15
 
 PDB/mmCIF reading derives glycan chemistry from the 3D coordinates, so a

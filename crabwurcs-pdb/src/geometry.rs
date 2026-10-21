@@ -2,8 +2,9 @@
 //!
 //! Nothing here reads an atom name or a residue name to decide chemistry:
 //! bonds come from elements and distances (plus explicit `CONECT`/`LINK`
-//! records), rings and the carbon numbering from the bond graph, and every
-//! configuration from a signed volume. Atom names are used in exactly one
+//! records and mmCIF `_struct_conn` connections), rings and the carbon
+//! numbering from the bond graph, and every configuration from a signed
+//! volume. Atom names are used in exactly one
 //! place, as a tie-break hint when the graph cannot tell the anomeric carbon
 //! from the ring-closing carbon (a pentopyranose with its O1 missing).
 //!
@@ -98,6 +99,10 @@ fn covalent_radius(element: &str) -> Option<f64> {
 
 fn distance_squared(left: [f64; 3], right: [f64; 3]) -> f64 {
     (0..3).map(|axis| (left[axis] - right[axis]).powi(2)).sum()
+}
+
+pub(crate) fn distance(left: [f64; 3], right: [f64; 3]) -> f64 {
+    distance_squared(left, right).sqrt()
 }
 
 fn subtract(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {

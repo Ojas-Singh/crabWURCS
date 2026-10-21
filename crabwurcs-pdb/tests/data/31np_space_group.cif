@@ -1,0 +1,92 @@
+data_31NP
+# Part of PDB entry 31NP (https://files.rcsb.org/download/31NP.cif, wwPDB archive copy downloaded 2026-10-20,
+# SHA-256 4fe5d12deefe7cc0462434a9a95f6abb80018679a539d2ff6fbd3df7a5c4e5ef): the _cell and _symmetry items, whose
+# H-M symbol (I 1 2 1) and Hall symbol (C 2y (x,y,-x+z)) pdbtbx reads as different space groups, and the
+# _atom_site records of the disaccharide of chain B (A1KB4 B1, GAL B2).
+# Regenerate with: awk '/^_(cell|symmetry)\./{s=s $0 "\n"} /^_atom_site\./{h=h $0 "\n"} /^(ATOM|HETATM)/ && $19=="B" && $17<=2 {r=r $0 "\n"} END{printf "%s#\nloop_\n%s%s", s, h, r}' 31NP.cif
+_cell.angle_alpha                  90.000 
+_cell.angle_alpha_esd              ? 
+_cell.angle_beta                   115.076 
+_cell.angle_beta_esd               ? 
+_cell.angle_gamma                  90.000 
+_cell.angle_gamma_esd              ? 
+_cell.entry_id                     31NP 
+_cell.details                      ? 
+_cell.formula_units_Z              ? 
+_cell.length_a                     61.482 
+_cell.length_a_esd                 ? 
+_cell.length_b                     40.201 
+_cell.length_b_esd                 ? 
+_cell.length_c                     69.761 
+_cell.length_c_esd                 ? 
+_cell.volume                       156172.355 
+_cell.volume_esd                   ? 
+_cell.Z_PDB                        4 
+_cell.reciprocal_angle_alpha       ? 
+_cell.reciprocal_angle_beta        ? 
+_cell.reciprocal_angle_gamma       ? 
+_cell.reciprocal_angle_alpha_esd   ? 
+_cell.reciprocal_angle_beta_esd    ? 
+_cell.reciprocal_angle_gamma_esd   ? 
+_cell.reciprocal_length_a          ? 
+_cell.reciprocal_length_b          ? 
+_cell.reciprocal_length_c          ? 
+_cell.reciprocal_length_a_esd      ? 
+_cell.reciprocal_length_b_esd      ? 
+_cell.reciprocal_length_c_esd      ? 
+_cell.pdbx_unique_axis             ? 
+_cell.pdbx_esd_method              ? 
+_symmetry.entry_id                         31NP 
+_symmetry.cell_setting                     ? 
+_symmetry.Int_Tables_number                5 
+_symmetry.space_group_name_Hall            'C 2y (x,y,-x+z)' 
+_symmetry.space_group_name_H-M             'I 1 2 1' 
+_symmetry.pdbx_full_space_group_name_H-M   ? 
+#
+loop_
+_atom_site.group_PDB 
+_atom_site.id 
+_atom_site.type_symbol 
+_atom_site.label_atom_id 
+_atom_site.label_alt_id 
+_atom_site.label_comp_id 
+_atom_site.label_asym_id 
+_atom_site.label_entity_id 
+_atom_site.label_seq_id 
+_atom_site.pdbx_PDB_ins_code 
+_atom_site.Cartn_x 
+_atom_site.Cartn_y 
+_atom_site.Cartn_z 
+_atom_site.occupancy 
+_atom_site.B_iso_or_equiv 
+_atom_site.pdbx_formal_charge 
+_atom_site.auth_seq_id 
+_atom_site.auth_comp_id 
+_atom_site.auth_asym_id 
+_atom_site.auth_atom_id 
+_atom_site.pdbx_PDB_model_num 
+HETATM 1194 C C6  . A1KB4 B 2 .   ? 34.37928 -2.61059  14.88700  1.000 64.34417  ? 1   A1KB4 B C6  1 
+HETATM 1195 C C1  . A1KB4 B 2 .   ? 36.57598 -0.00819  16.50049  1.000 60.59662  ? 1   A1KB4 B C1  1 
+HETATM 1196 C C2  . A1KB4 B 2 .   ? 35.71760 1.18592   16.04200  1.000 53.19276  ? 1   A1KB4 B C2  1 
+HETATM 1197 C C3  . A1KB4 B 2 .   ? 34.28613 0.89565   16.27728  1.000 46.61584  ? 1   A1KB4 B C3  1 
+HETATM 1198 C C4  . A1KB4 B 2 .   ? 33.83177 -0.23529  15.46470  1.000 50.25406  ? 1   A1KB4 B C4  1 
+HETATM 1199 C C5  . A1KB4 B 2 .   ? 34.94395 -1.25016  15.17189  1.000 62.29577  ? 1   A1KB4 B C5  1 
+HETATM 1200 O O5  . A1KB4 B 2 .   ? 35.89745 -1.29801  16.30479  1.000 53.26144  ? 1   A1KB4 B O5  1 
+HETATM 1201 C C7  . A1KB4 B 2 .   ? 36.89240 0.14326   17.97258  1.000 61.08503  ? 1   A1KB4 B C7  1 
+HETATM 1202 O O7  . A1KB4 B 2 .   ? 38.26091 0.53208   18.10583  1.000 69.22951  ? 1   A1KB4 B O7  1 
+HETATM 1203 O O2  . A1KB4 B 2 .   ? 36.09940 2.34940   16.77147  1.000 61.58668  ? 1   A1KB4 B O2  1 
+HETATM 1204 O O3  . A1KB4 B 2 .   ? 33.41979 2.03175   15.89610  1.000 39.05515  ? 1   A1KB4 B O3  1 
+HETATM 1205 N N1  . A1KB4 B 2 .   ? 33.89934 -2.92935  13.50524  1.000 65.21044  ? 1   A1KB4 B N1  1 
+HETATM 1206 O O6  . A1KB4 B 2 .   ? 34.31177 -3.43054  15.74628  1.000 74.48280  ? 1   A1KB4 B O6  1 
+HETATM 1207 S S1  . A1KB4 B 2 .   ? 32.46049 -0.99386  16.44626  1.000 78.05460  ? 1   A1KB4 B S1  1 
+HETATM 1208 C C1  . GAL   B 2 .   ? 31.24238 -1.33368  15.23061  1.000 44.68930  ? 2   GAL   B C1  1 
+HETATM 1209 C C2  . GAL   B 2 .   ? 29.99200 -1.74201  15.95454  1.000 46.05154  ? 2   GAL   B C2  1 
+HETATM 1210 C C3  . GAL   B 2 .   ? 28.87248 -1.95660  15.00660  1.000 39.54773  ? 2   GAL   B C3  1 
+HETATM 1211 C C4  . GAL   B 2 .   ? 28.67703 -0.76750  14.09372  1.000 28.98559  ? 2   GAL   B C4  1 
+HETATM 1212 C C5  . GAL   B 2 .   ? 29.98578 -0.38585  13.40537  1.000 29.20853  ? 2   GAL   B C5  1 
+HETATM 1213 C C6  . GAL   B 2 .   ? 29.84391 0.82860   12.52730  1.000 26.25360  ? 2   GAL   B C6  1 
+HETATM 1214 O O2  . GAL   B 2 .   ? 30.29200 -2.95885  16.67499  1.000 46.71593  ? 2   GAL   B O2  1 
+HETATM 1215 O O3  . GAL   B 2 .   ? 27.67167 -2.17646  15.78992  1.000 39.16799  ? 2   GAL   B O3  1 
+HETATM 1216 O O4  . GAL   B 2 .   ? 28.20976 0.33102   14.87019  1.000 29.35756  ? 2   GAL   B O4  1 
+HETATM 1217 O O5  . GAL   B 2 .   ? 31.04281 -0.09368  14.38652  1.000 33.62792  ? 2   GAL   B O5  1 
+HETATM 1218 O O6  . GAL   B 2 .   ? 31.10104 1.00493   11.90346  1.000 30.67654  ? 2   GAL   B O6  1 

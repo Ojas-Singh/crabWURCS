@@ -1,0 +1,83 @@
+REMARK   1 PART OF PDB ENTRY 1EO8 (HTTPS://FILES.RCSB.ORG/DOWNLOAD/1EO8.PDB, DOWNLOADED 2026-10-21,
+REMARK   1 SHA-256 2732a690d064bd23ced32411cb51b0e316df264f3772b83884a784a7068de3a1): THE LINK RECORDS
+REMARK   1 AND THE ATOMS OF ASN A81, NAG A440, ASN A165, NAG C1, NAG C2 AND MAN C3; NO CONECT RECORDS.
+REMARK   1 REGENERATE WITH: awk '/^LINK/{print} /^(ATOM|HETATM)/{k=substr($0,22,1) (substr($0,23,4)+0);
+REMARK   1 r=substr($0,18,3)} /^(ATOM|HETATM)/&&(k=="A81"||k=="A440"||k=="A165"||k=="C1"||k=="C2"||
+REMARK   1 k=="C3")&&r!="HOH"{print} END{print "END"}' 1EO8.pdb
+LINK         ND2 ASN A  81                 C1  NAG A 440     1555   1555  1.46  
+LINK         ND2 ASN A 165                 C1  NAG C   1     1555   1555  1.47  
+LINK         ND2 ASN A 285                 C1  NAG D   1     1555   1555  1.45  
+LINK         ND2 ASN B 154                 C1  NAG B 410     1555   1555  1.57  
+LINK         O4  NAG C   1                 C1  NAG C   2     1555   1555  1.42  
+LINK         O4  NAG C   2                 C1  MAN C   3     1555   1555  1.41  
+LINK         O4  NAG D   1                 C1  NAG D   2     1555   1555  1.42  
+ATOM    533  N   ASN A  81      78.101  69.106  33.247  1.00 24.51           N  
+ATOM    534  CA  ASN A  81      79.199  69.129  34.175  1.00 25.64           C  
+ATOM    535  C   ASN A  81      78.826  69.230  35.638  1.00 30.12           C  
+ATOM    536  O   ASN A  81      79.707  69.467  36.470  1.00 37.98           O  
+ATOM    537  CB  ASN A  81      80.191  70.219  33.813  1.00 28.06           C  
+ATOM    538  CG  ASN A  81      81.083  69.822  32.679  1.00 31.79           C  
+ATOM    539  OD1 ASN A  81      80.804  68.847  31.977  1.00 26.90           O  
+ATOM    540  ND2 ASN A  81      82.181  70.555  32.518  1.00 39.14           N  
+ATOM   1186  N   ASN A 165      84.446  52.753  11.076  1.00 38.61           N  
+ATOM   1187  CA  ASN A 165      85.202  51.898  11.959  1.00 37.92           C  
+ATOM   1188  C   ASN A 165      86.275  52.763  12.572  1.00 40.05           C  
+ATOM   1189  O   ASN A 165      87.365  52.873  12.017  1.00 44.85           O  
+ATOM   1190  CB  ASN A 165      85.833  50.763  11.165  1.00 38.47           C  
+ATOM   1191  CG  ASN A 165      86.868  49.992  11.966  1.00 43.72           C  
+ATOM   1192  OD1 ASN A 165      86.515  49.169  12.820  1.00 44.56           O  
+ATOM   1193  ND2 ASN A 165      88.149  50.241  11.692  1.00 45.62           N  
+HETATM 7158  C1  NAG C   1      89.189  49.436  12.353  1.00 49.09           C  
+HETATM 7159  C2  NAG C   1      90.229  48.883  11.472  1.00 52.09           C  
+HETATM 7160  C3  NAG C   1      91.038  47.986  12.304  1.00 51.46           C  
+HETATM 7161  C4  NAG C   1      91.729  48.827  13.394  1.00 51.05           C  
+HETATM 7162  C5  NAG C   1      90.696  49.543  14.145  1.00 49.38           C  
+HETATM 7163  C6  NAG C   1      91.297  50.510  15.042  1.00 46.68           C  
+HETATM 7164  C7  NAG C   1      89.556  49.047   9.251  1.00 59.27           C  
+HETATM 7165  C8  NAG C   1      88.996  48.429   7.968  1.00 57.84           C  
+HETATM 7166  N2  NAG C   1      89.703  48.235  10.296  1.00 55.50           N  
+HETATM 7167  O3  NAG C   1      91.914  47.484  11.371  1.00 54.73           O  
+HETATM 7168  O4  NAG C   1      92.553  48.105  14.369  1.00 55.73           O  
+HETATM 7169  O5  NAG C   1      89.864  50.247  13.261  1.00 50.81           O  
+HETATM 7170  O6  NAG C   1      91.745  51.537  14.206  1.00 48.26           O  
+HETATM 7171  O7  NAG C   1      89.847  50.250   9.295  1.00 62.71           O  
+HETATM 7172  C1  NAG C   2      93.967  48.111  14.202  1.00 55.12           C  
+HETATM 7173  C2  NAG C   2      94.684  47.914  15.497  1.00 54.93           C  
+HETATM 7174  C3  NAG C   2      96.174  47.968  15.214  1.00 59.15           C  
+HETATM 7175  C4  NAG C   2      96.504  46.924  14.197  1.00 60.26           C  
+HETATM 7176  C5  NAG C   2      95.720  47.201  12.990  1.00 60.48           C  
+HETATM 7177  C6  NAG C   2      96.037  46.329  11.868  1.00 61.86           C  
+HETATM 7178  C7  NAG C   2      93.328  48.535  17.294  1.00 45.33           C  
+HETATM 7179  C8  NAG C   2      92.794  49.425  18.360  1.00 46.58           C  
+HETATM 7180  N2  NAG C   2      94.295  48.914  16.468  1.00 49.13           N  
+HETATM 7181  O3  NAG C   2      96.939  47.784  16.379  1.00 60.62           O  
+HETATM 7182  O4  NAG C   2      97.867  46.983  13.882  1.00 65.55           O  
+HETATM 7183  O5  NAG C   2      94.366  47.080  13.299  1.00 58.46           O  
+HETATM 7184  O6  NAG C   2      97.073  47.055  11.251  1.00 63.98           O  
+HETATM 7185  O7  NAG C   2      92.803  47.433  17.241  1.00 42.33           O  
+HETATM 7186  C1  MAN C   3      98.750  46.146  14.595  1.00 69.87           C  
+HETATM 7187  C2  MAN C   3      99.932  45.959  13.710  1.00 73.57           C  
+HETATM 7188  C3  MAN C   3     101.036  45.160  14.521  1.00 76.77           C  
+HETATM 7189  C4  MAN C   3     101.207  45.452  16.058  1.00 74.92           C  
+HETATM 7190  C5  MAN C   3      99.913  45.960  16.699  1.00 73.01           C  
+HETATM 7191  C6  MAN C   3     100.208  46.799  17.952  1.00 72.15           C  
+HETATM 7192  O2  MAN C   3     100.375  47.218  13.248  1.00 74.16           O  
+HETATM 7193  O3  MAN C   3     102.348  45.442  14.015  1.00 80.75           O  
+HETATM 7194  O4  MAN C   3     101.590  44.222  16.698  1.00 75.81           O  
+HETATM 7195  O5  MAN C   3      99.216  46.804  15.772  1.00 71.82           O  
+HETATM 7196  O6  MAN C   3     100.564  48.110  17.543  1.00 73.39           O  
+HETATM 7225  C1  NAG A 440      83.294  70.099  31.683  1.00 49.25           C  
+HETATM 7226  C2  NAG A 440      83.482  71.198  30.703  1.00 52.91           C  
+HETATM 7227  C3  NAG A 440      84.527  70.650  29.750  1.00 56.04           C  
+HETATM 7228  C4  NAG A 440      85.888  70.554  30.506  1.00 57.67           C  
+HETATM 7229  C5  NAG A 440      85.713  69.381  31.487  1.00 56.76           C  
+HETATM 7230  C6  NAG A 440      87.016  68.901  32.312  1.00 57.82           C  
+HETATM 7231  C7  NAG A 440      81.575  72.615  30.349  1.00 51.56           C  
+HETATM 7232  C8  NAG A 440      80.165  72.794  29.803  1.00 53.24           C  
+HETATM 7233  N2  NAG A 440      82.163  71.434  30.184  1.00 52.18           N  
+HETATM 7234  O3  NAG A 440      84.652  71.439  28.590  1.00 58.64           O  
+HETATM 7235  O4  NAG A 440      87.004  70.404  29.625  1.00 62.17           O  
+HETATM 7236  O5  NAG A 440      84.580  69.813  32.373  1.00 55.20           O  
+HETATM 7237  O6  NAG A 440      87.628  69.794  33.288  1.00 58.94           O  
+HETATM 7238  O7  NAG A 440      82.132  73.569  30.886  1.00 50.06           O  
+END

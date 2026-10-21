@@ -1,0 +1,113 @@
+data_5LFR
+# Part of PDB entry 5LFR (https://files.rcsb.org/download/5LFR.cif, wwPDB archive copy downloaded 2026-10-20,
+# SHA-256 0393174f76f903a3c0698cee4d6f9d56fd80832b6de3c71727934ced0eaba45a): the _struct_conn loop and
+# the _atom_site records of TRP A22 and its C-mannoside MAN A401 (author numbering).
+# Regenerate with: awk '/^_struct_conn\./{f=1} f&&/^#/{f=0} f{c=c $0 "\n"} /^_atom_site\./{h=h $0 "\n"} /^(ATOM|HETATM)/ && ($19 $17=="A22"||$19 $17=="A401"){r=r $0 "\n"} END{printf "loop_\n%s#\nloop_\n%s%s", c, h, r}' 5LFR.cif
+loop_
+_struct_conn.id 
+_struct_conn.conn_type_id 
+_struct_conn.pdbx_leaving_atom_flag 
+_struct_conn.pdbx_PDB_id 
+_struct_conn.ptnr1_label_asym_id 
+_struct_conn.ptnr1_label_comp_id 
+_struct_conn.ptnr1_label_seq_id 
+_struct_conn.ptnr1_label_atom_id 
+_struct_conn.pdbx_ptnr1_label_alt_id 
+_struct_conn.pdbx_ptnr1_PDB_ins_code 
+_struct_conn.pdbx_ptnr1_standard_comp_id 
+_struct_conn.ptnr1_symmetry 
+_struct_conn.ptnr2_label_asym_id 
+_struct_conn.ptnr2_label_comp_id 
+_struct_conn.ptnr2_label_seq_id 
+_struct_conn.ptnr2_label_atom_id 
+_struct_conn.pdbx_ptnr2_label_alt_id 
+_struct_conn.pdbx_ptnr2_PDB_ins_code 
+_struct_conn.ptnr1_auth_asym_id 
+_struct_conn.ptnr1_auth_comp_id 
+_struct_conn.ptnr1_auth_seq_id 
+_struct_conn.ptnr2_auth_asym_id 
+_struct_conn.ptnr2_auth_comp_id 
+_struct_conn.ptnr2_auth_seq_id 
+_struct_conn.ptnr2_symmetry 
+_struct_conn.pdbx_ptnr3_label_atom_id 
+_struct_conn.pdbx_ptnr3_label_seq_id 
+_struct_conn.pdbx_ptnr3_label_comp_id 
+_struct_conn.pdbx_ptnr3_label_asym_id 
+_struct_conn.pdbx_ptnr3_label_alt_id 
+_struct_conn.pdbx_ptnr3_PDB_ins_code 
+_struct_conn.details 
+_struct_conn.pdbx_dist_value 
+_struct_conn.pdbx_value_order 
+_struct_conn.pdbx_role 
+disulf1  disulf ?    ? A CYS 20  SG  ? ? ? 1_555 A CYS 148 SG ? ? A CYS 37  A CYS 165 1_555 ? ? ? ? ? ? ? 2.030 ? ?               
+disulf2  disulf ?    ? A CYS 25  SG  ? ? ? 1_555 A CYS 83  SG ? ? A CYS 42  A CYS 100 1_555 ? ? ? ? ? ? ? 2.031 ? ?               
+disulf3  disulf ?    ? A CYS 142 SG  ? ? ? 1_555 A CYS 200 SG ? ? A CYS 159 A CYS 217 1_555 ? ? ? ? ? ? ? 2.028 ? ?               
+disulf4  disulf ?    ? A CYS 244 SG  ? ? ? 1_555 A CYS 288 SG ? ? A CYS 261 A CYS 305 1_555 ? ? ? ? ? ? ? 2.029 ? ?               
+disulf5  disulf ?    ? B CYS 20  SG  ? ? ? 1_555 B CYS 148 SG ? ? B CYS 37  B CYS 165 1_555 ? ? ? ? ? ? ? 2.029 ? ?               
+disulf6  disulf ?    ? B CYS 25  SG  ? ? ? 1_555 B CYS 83  SG ? ? B CYS 42  B CYS 100 1_555 ? ? ? ? ? ? ? 2.032 ? ?               
+disulf7  disulf ?    ? B CYS 142 SG  ? ? ? 1_555 B CYS 200 SG ? ? B CYS 159 B CYS 217 1_555 ? ? ? ? ? ? ? 2.028 ? ?               
+disulf8  disulf ?    ? B CYS 244 SG  ? ? ? 1_555 B CYS 288 SG ? ? B CYS 261 B CYS 305 1_555 ? ? ? ? ? ? ? 2.028 ? ?               
+covale1  covale one  ? A TRP 5   CD1 ? ? ? 1_555 E MAN .   C1 ? ? A TRP 22  A MAN 401 1_555 ? ? ? ? ? ? ? 1.491 ? C-Mannosylation 
+covale2  covale one  ? A ASN 82  ND2 ? ? ? 1_555 C NAG .   C1 ? ? A ASN 99  C NAG 1   1_555 ? ? ? ? ? ? ? 1.437 ? N-Glycosylation 
+covale3  covale one  ? A ASN 206 ND2 ? ? ? 1_555 F NAG .   C1 ? ? A ASN 223 A NAG 407 1_555 ? ? ? ? ? ? ? 1.450 ? N-Glycosylation 
+covale4  covale one  ? A ASN 229 ND2 ? ? ? 1_555 G NAG .   C1 ? ? A ASN 246 A NAG 408 1_555 ? ? ? ? ? ? ? 1.438 ? N-Glycosylation 
+covale5  covale one  ? A ASN 298 ND2 ? ? ? 1_555 H NAG .   C1 ? ? A ASN 315 A NAG 409 1_555 ? ? ? ? ? ? ? 1.437 ? N-Glycosylation 
+covale6  covale one  ? B TRP 5   CD1 ? ? ? 1_555 N MAN .   C1 ? ? B TRP 22  B MAN 401 1_555 ? ? ? ? ? ? ? 1.496 ? C-Mannosylation 
+covale7  covale one  ? B ASN 82  ND2 ? ? ? 1_555 D NAG .   C1 ? ? B ASN 99  D NAG 1   1_555 ? ? ? ? ? ? ? 1.437 ? N-Glycosylation 
+covale8  covale one  ? B ASN 229 ND2 ? ? ? 1_555 O NAG .   C1 ? ? B ASN 246 B NAG 406 1_555 ? ? ? ? ? ? ? 1.439 ? N-Glycosylation 
+covale9  covale one  ? B ASN 298 ND2 ? ? ? 1_555 P NAG .   C1 ? ? B ASN 315 B NAG 407 1_555 ? ? ? ? ? ? ? 1.441 ? N-Glycosylation 
+covale10 covale both ? C NAG .   O4  ? ? ? 1_555 C NAG .   C1 ? ? C NAG 1   C NAG 2   1_555 ? ? ? ? ? ? ? 1.441 ? ?               
+covale11 covale both ? C NAG .   O4  ? ? ? 1_555 C BMA .   C1 ? ? C NAG 2   C BMA 3   1_555 ? ? ? ? ? ? ? 1.435 ? ?               
+covale12 covale both ? C BMA .   O6  ? ? ? 1_555 C MAN .   C1 ? ? C BMA 3   C MAN 4   1_555 ? ? ? ? ? ? ? 1.445 ? ?               
+covale13 covale both ? C MAN .   O3  ? ? ? 1_555 C MAN .   C1 ? ? C MAN 4   C MAN 5   1_555 ? ? ? ? ? ? ? 1.428 ? ?               
+covale14 covale both ? D NAG .   O4  ? ? ? 1_555 D NAG .   C1 ? ? D NAG 1   D NAG 2   1_555 ? ? ? ? ? ? ? 1.436 ? ?               
+covale15 covale both ? D NAG .   O4  ? ? ? 1_555 D BMA .   C1 ? ? D NAG 2   D BMA 3   1_555 ? ? ? ? ? ? ? 1.433 ? ?               
+covale16 covale both ? D BMA .   O3  ? ? ? 1_555 D MAN .   C1 ? ? D BMA 3   D MAN 4   1_555 ? ? ? ? ? ? ? 1.435 ? ?               
+#
+loop_
+_atom_site.group_PDB 
+_atom_site.id 
+_atom_site.type_symbol 
+_atom_site.label_atom_id 
+_atom_site.label_alt_id 
+_atom_site.label_comp_id 
+_atom_site.label_asym_id 
+_atom_site.label_entity_id 
+_atom_site.label_seq_id 
+_atom_site.pdbx_PDB_ins_code 
+_atom_site.Cartn_x 
+_atom_site.Cartn_y 
+_atom_site.Cartn_z 
+_atom_site.occupancy 
+_atom_site.B_iso_or_equiv 
+_atom_site.pdbx_formal_charge 
+_atom_site.auth_seq_id 
+_atom_site.auth_comp_id 
+_atom_site.auth_asym_id 
+_atom_site.auth_atom_id 
+_atom_site.pdbx_PDB_model_num 
+ATOM   21   N N   . TRP A 1 5   ? -20.083 41.161 64.248  1.00 53.03  ? 22  TRP A N   1 
+ATOM   22   C CA  . TRP A 1 5   ? -19.312 40.056 63.688  1.00 50.63  ? 22  TRP A CA  1 
+ATOM   23   C C   . TRP A 1 5   ? -18.594 40.527 62.431  1.00 50.50  ? 22  TRP A C   1 
+ATOM   24   O O   . TRP A 1 5   ? -19.214 41.082 61.525  1.00 56.63  ? 22  TRP A O   1 
+ATOM   25   C CB  . TRP A 1 5   ? -20.205 38.858 63.354  1.00 53.10  ? 22  TRP A CB  1 
+ATOM   26   C CG  . TRP A 1 5   ? -20.814 38.171 64.539  1.00 57.80  ? 22  TRP A CG  1 
+ATOM   27   C CD1 . TRP A 1 5   ? -22.122 38.214 64.923  1.00 74.12  ? 22  TRP A CD1 1 
+ATOM   28   C CD2 . TRP A 1 5   ? -20.146 37.325 65.483  1.00 49.17  ? 22  TRP A CD2 1 
+ATOM   29   N NE1 . TRP A 1 5   ? -22.309 37.454 66.052  1.00 63.54  ? 22  TRP A NE1 1 
+ATOM   30   C CE2 . TRP A 1 5   ? -21.111 36.897 66.416  1.00 56.99  ? 22  TRP A CE2 1 
+ATOM   31   C CE3 . TRP A 1 5   ? -18.825 36.891 65.633  1.00 45.51  ? 22  TRP A CE3 1 
+ATOM   32   C CZ2 . TRP A 1 5   ? -20.799 36.057 67.482  1.00 47.06  ? 22  TRP A CZ2 1 
+ATOM   33   C CZ3 . TRP A 1 5   ? -18.517 36.055 66.692  1.00 43.00  ? 22  TRP A CZ3 1 
+ATOM   34   C CH2 . TRP A 1 5   ? -19.500 35.648 67.603  1.00 48.80  ? 22  TRP A CH2 1 
+HETATM 4963 C C1  . MAN E 4 .   ? -23.188 38.980 64.215  1.00 61.22  ? 401 MAN A C1  1 
+HETATM 4964 C C2  . MAN E 4 .   ? -23.574 40.246 64.972  1.00 74.20  ? 401 MAN A C2  1 
+HETATM 4965 C C3  . MAN E 4 .   ? -24.543 41.092 64.152  1.00 79.65  ? 401 MAN A C3  1 
+HETATM 4966 C C4  . MAN E 4 .   ? -25.718 40.256 63.587  1.00 87.65  ? 401 MAN A C4  1 
+HETATM 4967 C C5  . MAN E 4 .   ? -25.239 38.932 62.932  1.00 80.03  ? 401 MAN A C5  1 
+HETATM 4968 C C6  . MAN E 4 .   ? -24.610 39.116 61.558  1.00 86.54  ? 401 MAN A C6  1 
+HETATM 4969 O O2  . MAN E 4 .   ? -22.435 41.070 65.189  1.00 84.15  ? 401 MAN A O2  1 
+HETATM 4970 O O3  . MAN E 4 .   ? -23.876 41.810 63.112  1.00 82.41  ? 401 MAN A O3  1 
+HETATM 4971 O O4  . MAN E 4 .   ? -26.647 39.969 64.624  1.00 89.69  ? 401 MAN A O4  1 
+HETATM 4972 O O5  . MAN E 4 .   ? -24.292 38.236 63.785  1.00 71.76  ? 401 MAN A O5  1 
+HETATM 4973 O O6  . MAN E 4 .   ? -25.441 39.995 60.805  1.00 92.32  ? 401 MAN A O6  1 
