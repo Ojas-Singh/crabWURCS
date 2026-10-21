@@ -349,6 +349,9 @@ const CRYSTAL_ITEMS: [&str; 12] = [
 /// panics on one).
 pub(crate) fn has_unknown_crystal_item(text: &str) -> bool {
     text.lines().any(|line| {
+        if !line.starts_with('_') {
+            return false;
+        }
         let mut words = line.split_ascii_whitespace();
         let (Some(tag), Some(value), None) = (words.next(), words.next(), words.next()) else {
             return false;

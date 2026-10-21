@@ -17,7 +17,7 @@ mod geometry;
 mod names;
 mod reading;
 
-use cif::{AtomReference, ConnectionRecords};
+use cif::ConnectionRecords;
 use crabwurcs_core::{
     CarbonPosition, Linkage, Modification, Monosaccharide, ResidueGraph, residue_from_kind,
 };
@@ -650,11 +650,14 @@ fn alternative_residues(located: &[pdbtbx::AtomConformerResidueChainModel<'_>]) 
     let mut overlaps: HashMap<(usize, usize), usize> = HashMap::new();
     for hierarchy in located {
         let atom = hierarchy.atom();
-        let element = atom
-            .element()
-            .map(|element| element.symbol().to_ascii_uppercase())
-            .unwrap_or_else(|| element_from_name(atom.name()));
-        if !atom.hetero() || matches!(element.as_str(), "H" | "D") {
+        if !atom.hetero() {
+            continue;
+        }
+        let hydrogen = match atom.element() {
+            Some(element) => element.symbol().eq_ignore_ascii_case("H"),
+            None => matches!(element_from_name(atom.name()).as_str(), "H" | "D"),
+        };
+        if hydrogen {
             continue;
         }
         let key = std::ptr::from_ref(hierarchy.residue()) as usize;
@@ -757,7 +760,21 @@ fn read_structure(
     let mut atoms: Vec<StructureAtom> = Vec::new();
     let mut atom_index: HashMap<usize, usize> = HashMap::new();
     let mut atoms_by_serial: HashMap<usize, usize> = HashMap::new();
-    let mut atoms_by_reference: HashMap<AtomReference, usize> = HashMap::new();
+    // Ends of `_struct_conn`/`LINK` connections by sequence number, matched
+    // to atoms as they are read.
+    let references = connections
+        .covalent
+        .iter()
+        .flat_map(|(first, second)| [first, second])
+        .collect::<Vec<_>>();
+    let mut references_by_sequence: HashMap<isize, Vec<usize>> = HashMap::new();
+    for (index, reference) in references.iter().enumerate() {
+        references_by_sequence
+            .entry(reference.sequence)
+            .or_default()
+            .push(index);
+    }
+    let mut referenced_atoms: Vec<Option<usize>> = vec![None; references.len()];
     let mut seen_names: HashSet<(usize, String)> = HashSet::new();
     for hierarchy in &located {
         let residue = hierarchy.residue();
@@ -795,15 +812,17 @@ fn read_structure(
             .entry(atom.serial_number())
             .or_insert(atoms.len());
         let (sequence, insertion_code) = residue.id();
-        atoms_by_reference
-            .entry(AtomReference {
-                chain: hierarchy.chain().id().to_string(),
-                sequence,
-                insertion_code: insertion_code.map(str::to_string),
-                residue: conformer.name().to_ascii_uppercase(),
-                atom: atom.name().to_string(),
-            })
-            .or_insert(atoms.len());
+        for &reference in references_by_sequence.get(&sequence).into_iter().flatten() {
+            let wanted = references[reference];
+            if referenced_atoms[reference].is_none()
+                && wanted.atom == atom.name()
+                && wanted.chain == hierarchy.chain().id()
+                && wanted.insertion_code.as_deref() == insertion_code
+                && wanted.residue.eq_ignore_ascii_case(conformer.name())
+            {
+                referenced_atoms[reference] = Some(atoms.len());
+            }
+        }
         atoms.push(StructureAtom {
             residue: index,
             name: atom.name().to_string(),
@@ -829,11 +848,8 @@ fn read_structure(
         }
     }
     // `_struct_conn` and `LINK`, which pdbtbx does not read.
-    for (first, second) in &connections.covalent {
-        if let (Some(first), Some(second)) = (
-            atoms_by_reference.get(first),
-            atoms_by_reference.get(second),
-        ) {
+    for pair in referenced_atoms.chunks(2) {
+        if let [Some(first), Some(second)] = pair {
             explicit.push((*first, *second));
         }
     }
