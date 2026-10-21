@@ -36,6 +36,22 @@ complexes) as mmCIF.
   again without its space-group and cell items, which the extractor does not
   use; any other parse error is still reported. A file whose space group or
   cell is unknown (`?`) is read without them at once (pdbtbx panicked).
+- **IUPAC condensed never guesses a residue name.** A residue the registry
+  does not name was written with a name guessed from its skeleton, which
+  read back as another residue or not at all: `Res4`, `Res41Me`, `Res7`,
+  `GalA` for a heptose, `GlcA` for a sialic acid with an inverted C6, `Fuc`
+  for a 3-deoxy-GlcNAc, `Man1Me` for a methyl mannoside whose C6 was
+  undetermined, `Neu5Ac2Me` for a 9-amino-Neu5Ac2Me. A name is now written
+  only when it reads back as the same residue; otherwise writing IUPAC
+  condensed, IUPAC extended or GLYCAM is a `ConversionError` naming the
+  residue's UniqueRES (`residue ax221m-1a_1-5_1*OC (no IUPAC condensed
+  name) cannot be represented in IUPAC without losing information`). The
+  residues without a name are listed in the formats documentation.
+- **Phosphates in IUPAC condensed.** `Man6P`, `GlcNAc1P`: a phosphate
+  (`OPO/3O/3=O`) is written (it was a `ConversionError`) and read (it was
+  silently dropped: `Man6P(a1-` read as `Man(a1-`).
+- IUPAC condensed `GlcN6S` reads its 6-O-sulfate (an O-sulfate right after
+  `N` was dropped).
 
 ### Output changes
 
@@ -43,6 +59,10 @@ complexes) as mmCIF.
   (`A/ASN/81`) where they reported their root residue (`A/NAG/440`); so do
   PDB files with `LINK` records and no `CONECT` records, and files without
   any connection records.
+- IUPAC condensed, IUPAC extended and GLYCAM of residues without a name (see
+  above) are a `ConversionError` where a guessed name was written;
+  phosphorylated residues are written (`Man6P(a1-`, GLYCAM `DManp[6P]`,
+  which GLYCAM reading rejects) where they were an error.
 
 ## 0.3.3 - 2026-10-15
 

@@ -1876,6 +1876,29 @@ fn extract_name_modifications(name: &str) -> Vec<Modification> {
         }
     }
 
+    // A phosphate (`Man6P`, `GlcNAc1P`); `PCho` is phosphocholine.
+    let phosphate_re =
+        regex::Regex::new(r"([0-9]+)(?:\(([^)]+)\))?P([A-Za-z]?)").expect("phosphate regex");
+    for captures in phosphate_re.captures_iter(name) {
+        if captures
+            .get(3)
+            .is_some_and(|next| !next.as_str().is_empty())
+        {
+            continue;
+        }
+        if let Ok(position) = captures[1].parse::<u8>()
+            && position > 0
+        {
+            mods.push(Modification {
+                position: CarbonPosition(position),
+                descriptor: "OPO/3O/3=O".into(),
+                probability: captures
+                    .get(2)
+                    .and_then(|value| parse_substituent_probability(value.as_str())),
+            });
+        }
+    }
+
     let pcho_re = regex::Regex::new(r"([0-9]+)(?:\(([^)]+)\))?PCho").expect("phosphocholine regex");
     for captures in pcho_re.captures_iter(name) {
         if let Ok(position) = captures[1].parse::<u8>() {
@@ -1962,11 +1985,9 @@ fn extract_name_modifications(name: &str) -> Vec<Modification> {
             }
         }
 
-        if i + 1 < bytes.len()
-            && bytes[i].is_ascii_digit()
-            && bytes[i + 1] == b'S'
-            && (i == 0 || bytes[i - 1] != b'N')
-        {
+        // `6S` is an O-sulfate wherever it follows (`GlcNAc6S`, `GlcN6S`);
+        // the N-sulfate is `NS` (`GlcNS6S`), read above.
+        if i + 1 < bytes.len() && bytes[i].is_ascii_digit() && bytes[i + 1] == b'S' {
             let pos = bytes[i] - b'0';
             if pos > 0
                 && !mods
@@ -2074,6 +2095,15 @@ fn write_iupac_condensed_impl(graph: &ResidueGraph, preserve_source: bool) -> Iu
     {
         return Err(IupacError::UnrepresentableInFormat {
             residue: format!("WURCS MAP bridge {map_code}"),
+            format: "IUPAC",
+        });
+    }
+    if let Some(residue) = inner
+        .node_weights()
+        .find(|residue| !residue_has_iupac_name(residue))
+    {
+        return Err(IupacError::UnrepresentableInFormat {
+            residue: format!("{} (no IUPAC condensed name)", unique_residue_text(residue)),
             format: "IUPAC",
         });
     }
@@ -2198,6 +2228,7 @@ fn iupac_modification_is_representable(descriptor: &str) -> bool {
     descriptor == "N"
         || descriptor == "OC"
         || descriptor == "OCC/3=O"
+        || descriptor == "OPO/3O/3=O"
         || descriptor.contains("NC")
         || descriptor.contains("NSO")
         || descriptor.contains("OSO")
@@ -2326,6 +2357,65 @@ fn residue_to_iupac_name(residue: &Monosaccharide) -> String {
     }
 }
 
+/// Whether the residue has an IUPAC condensed name: one that reads back as
+/// the same residue. A registry residue (or its enantiomer) without
+/// substituents beyond its own has one. Other names are guessed from the
+/// skeleton (`Neu5Ac`, `Kdn`, `Res4`) or carry substituents the notation may
+/// not spell, and are read back: a name that reads back as another residue
+/// (an undetermined centre `x` written as if known, a heptose written
+/// `GalA`, a skeleton with no name written `Res4`, a 4-amino group left out
+/// of `Fuc`) would lose information silently.
+fn residue_has_iupac_name(residue: &Monosaccharide) -> bool {
+    if residue.display_name.is_some() {
+        return true;
+    }
+    if let Some((kind, _)) = classify_residue_configuration(residue)
+        && kind.unique_residue().is_some()
+    {
+        let template = residue_from_kind(kind)
+            .map(|template| template.modifications)
+            .unwrap_or_default();
+        let only_own = residue.modifications.iter().all(|modification| {
+            template
+                .iter()
+                .any(|required| is_named_modification(required, modification))
+        });
+        if only_own {
+            return true;
+        }
+    }
+    let name = residue_to_iupac_name(residue);
+    let text = match residue.anomeric_symbol {
+        _ if residue.anomeric_position == 0 => name,
+        AnomericSymbol::OpenChain => name,
+        AnomericSymbol::Alpha => format!("{name}(a{}-", residue.anomeric_position),
+        AnomericSymbol::Beta => format!("{name}(b{}-", residue.anomeric_position),
+        AnomericSymbol::Unknown => format!("{name}(?{}-", residue.anomeric_position),
+    };
+    let Ok(graph) = parse_iupac_condensed(&text) else {
+        return false;
+    };
+    let Some(parsed) = graph.root().and_then(|root| graph.residue(root)) else {
+        return false;
+    };
+    unique_residue_text(parsed) == unique_residue_text(residue)
+}
+
+/// The WURCS UniqueRES of one residue (`a2122h-1b_1-5`).
+fn unique_residue_text(residue: &Monosaccharide) -> String {
+    let mut graph = ResidueGraph::new();
+    let node = graph.add_residue(residue.clone());
+    graph.set_root(node);
+    crabwurcs_core::write_wurcs(&graph)
+        .ok()
+        .and_then(|wurcs| {
+            let start = wurcs.find('[')? + 1;
+            let end = wurcs[start..].find(']')? + start;
+            Some(wurcs[start..end].to_string())
+        })
+        .unwrap_or_else(|| residue.skeleton_code.clone())
+}
+
 /// Whether `actual` is the modification the registry entry's own name
 /// carries at that position (the `NAc` of GlcNAc, the `N` of GlcN).
 fn is_named_modification(required: &Modification, actual: &Modification) -> bool {
@@ -2413,6 +2503,8 @@ fn registry_residue_name(residue: &Monosaccharide, kind: ResidueKind, inverted: 
             Some("S")
         } else if modification.descriptor.contains("P^XOCCNC") {
             Some("PCho")
+        } else if modification.descriptor == "OPO/3O/3=O" {
+            Some("P")
         } else {
             None
         };
@@ -2584,6 +2676,8 @@ fn legacy_residue_name(residue: &Monosaccharide) -> String {
             Some("S")
         } else if modification.descriptor.contains("P^XOCCNC") {
             Some("PCho")
+        } else if modification.descriptor == "OPO/3O/3=O" {
+            Some("P")
         } else {
             None
         };
@@ -3946,6 +4040,76 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn phosphates_and_o_sulfates_after_an_amine_round_trip() {
+        for (wurcs, iupac) in [
+            (
+                "WURCS=2.0/1,1,0/[a1122h-1a_1-5_6*OPO/3O/3=O]/1/",
+                "Man6P(a1-",
+            ),
+            (
+                "WURCS=2.0/1,1,0/[a2122h-1a_1-5_1*OPO/3O/3=O_2*NCC/3=O]/1/",
+                "GlcNAc1P(a1-",
+            ),
+            (
+                "WURCS=2.0/2,2,1/[a1122h-1a_1-5_6*OPO/3O/3=O][a1122h-1a_1-5]/1-2/a2-b1",
+                "Man(a1-2)Man6P(a1-",
+            ),
+            (
+                "WURCS=2.0/1,1,0/[a2122h-1a_1-5_2*N_6*OSO/3=O/3=O]/1/",
+                "GlcN6S(a1-",
+            ),
+        ] {
+            let graph = crabwurcs_core::parse_wurcs(wurcs).unwrap();
+            assert_eq!(write_iupac_condensed(&graph).unwrap(), iupac, "{wurcs}");
+            assert_eq!(
+                crabwurcs_core::write_wurcs(&parse_iupac_condensed(iupac).unwrap()).unwrap(),
+                wurcs,
+                "{iupac}"
+            );
+        }
+    }
+
+    #[test]
+    fn residues_without_an_iupac_name_are_an_error_not_a_guess() {
+        for (wurcs, guessed) in [
+            // Undetermined C2 (a 2-seleno sugar read from coordinates).
+            ("WURCS=2.0/1,1,0/[ax221m-1a_1-5_1*OC]/1/", "Res41Me"),
+            // A C-fucoside read as a ketose.
+            ("WURCS=2.0/1,1,0/[ma1121dh-2x_2-6]/1/", "Res7"),
+            // A heptose without a registry name.
+            ("WURCS=2.0/1,1,0/[a21122h-1b_1-5]/1/", "GalA"),
+            // Undetermined C9 of a sialic acid.
+            ("WURCS=2.0/1,1,0/[Aad21122x-2a_2-6_5*NCC/3=O]/1/", "Neu5Ac"),
+            // An undetermined C6 written as the known hydroxymethyl.
+            ("WURCS=2.0/1,1,0/[a1122x-1a_1-5_1*OC]/1/", "Man1Me"),
+            // A 4-amino group the condensed notation does not spell.
+            ("WURCS=2.0/1,1,0/[a1221m-1a_1-5_4*N]/1/", "Fuc"),
+        ] {
+            let graph = crabwurcs_core::parse_wurcs(wurcs).unwrap();
+            match write_iupac_condensed(&graph) {
+                Err(IupacError::UnrepresentableInFormat { residue, format }) => {
+                    assert_eq!(format, "IUPAC");
+                    assert!(residue.contains("no IUPAC condensed name"), "{residue}");
+                }
+                other => panic!("{wurcs} was written {other:?} (formerly {guessed})"),
+            }
+        }
+        // Names outside the registry that read back as the same residue are
+        // written, and so are generic residues.
+        for (wurcs, iupac) in [
+            ("WURCS=2.0/1,1,0/[a1221h-1b_1-5]/1/", "L-Gal(b1-"),
+            (
+                "WURCS=2.0/1,1,0/[Aad21122h-2a_2-6_5*NCC/3=O]/1/",
+                "Neu5Ac(a2-",
+            ),
+            ("WURCS=2.0/1,1,0/[axxxxh-1x_1-5]/1/", "Hex(?1-"),
+        ] {
+            let graph = crabwurcs_core::parse_wurcs(wurcs).unwrap();
+            assert_eq!(write_iupac_condensed(&graph).unwrap(), iupac, "{wurcs}");
+        }
     }
 
     #[test]
