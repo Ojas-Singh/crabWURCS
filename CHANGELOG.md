@@ -45,7 +45,8 @@ structures outside that corpus.
   `RenderOptions::cleavages` mark them on the drawing.
 - **Structure comparison.** `structure_key` and `same_structure` compare
   glycans whatever notation or residue numbering they came from. A stated
-  anomer or position is more than an open one.
+  anomer or position is more than an open one. A non-reducing sugar such as
+  sucrose is one structure from either residue, though it writes as it was given.
 - **Grids and figures.** `render_grid_svg` and `render_grid_png` draw many
   glycans on one canvas, and `svg_to_png` is public. Python's new
   `crabwurcs.figures` has `render_grid`, `write_images`, and `annotate_svg` and

@@ -274,11 +274,67 @@ pub fn convert(input: &str, from: Format, to: Format) -> ConversionResult<String
 /// notation can represent.
 ///
 /// A stated anomer is part of the structure: `GlcNAc` and `GlcNAc(b1-` are
-/// different glycans, as are `Gal(?1-4)GlcNAc` and `Gal(b1-4)GlcNAc`.
+/// different glycans, as are `Gal(?1-4)GlcNAc` and `Gal(b1-4)GlcNAc`. A
+/// non-reducing sugar such as sucrose is one structure from either residue.
 pub fn structure_key(graph: &ResidueGraph) -> Option<String> {
+    let key = notation_key(graph)?;
+    let other = from_other_anomer(graph).and_then(|other| notation_key(&other));
+    Some(match other {
+        Some(other) => key.min(other),
+        None => key,
+    })
+}
+
+fn notation_key(graph: &ResidueGraph) -> Option<String> {
     core::write_wurcs(graph)
         .ok()
         .or_else(|| iupac::write_iupac_condensed_canonical(graph).ok())
+}
+
+/// The glycan written from the other side of a bond between two anomeric
+/// carbons, if its root is in one. Neither residue of such a bond is a reducing
+/// end, so which one a notation starts from says nothing about the structure.
+fn from_other_anomer(graph: &ResidueGraph) -> Option<ResidueGraph> {
+    let root = graph.root()?;
+    let inner = graph.inner();
+    let edge = inner.edge_indices().find(|edge| {
+        let linkage = &inner[*edge];
+        // An open anomer has position 0, as an open linkage does, and that is
+        // no bond between anomeric carbons.
+        inner.edge_endpoints(*edge).is_some_and(|(source, target)| {
+            source == root
+                && linkage.repeat.is_none()
+                && !linkage.cyclic
+                && linkage.parent_position.0 != 0
+                && linkage.child_position.0 != 0
+                && linkage.parent_position.0 == inner[source].anomeric_position
+                && linkage.child_position.0 == inner[target].anomeric_position
+        })
+    })?;
+    let (parent, child) = inner.edge_endpoints(edge)?;
+
+    let mut linkage = inner[edge].clone();
+    std::mem::swap(&mut linkage.parent_position, &mut linkage.child_position);
+    std::mem::swap(
+        &mut linkage.parent_position_alternatives,
+        &mut linkage.child_position_alternatives,
+    );
+    std::mem::swap(
+        &mut linkage.parent_probability,
+        &mut linkage.child_probability,
+    );
+    std::mem::swap(&mut linkage.parent_direction, &mut linkage.child_direction);
+    std::mem::swap(
+        &mut linkage.parent_modification_position,
+        &mut linkage.child_modification_position,
+    );
+
+    let mut other = graph.clone();
+    let edited = other.inner_mut();
+    edited.remove_edge(edge);
+    edited.add_edge(child, parent, linkage);
+    other.set_root(child);
+    Some(other)
 }
 
 /// Whether two graphs hold the same glycan; see [`structure_key`].
@@ -647,6 +703,125 @@ mod tests {
             checked += 1;
         }
         assert_eq!(checked, 942);
+    }
+
+    const GLC_A: &str = "a2122h-1a_1-5";
+    const GLC_B: &str = "a2122h-1b_1-5";
+    const FRU_B: &str = "ha122h-2b_2-5";
+
+    #[test]
+    fn a_non_reducing_sugar_is_one_structure_from_either_residue() {
+        let gal_a = "a2112h-1a_1-5";
+        for (name, left, right) in [
+            (
+                "sucrose",
+                format!("WURCS=2.0/2,2,1/[{GLC_A}][{FRU_B}]/1-2/a1-b2"),
+                format!("WURCS=2.0/2,2,1/[{FRU_B}][{GLC_A}]/1-2/a2-b1"),
+            ),
+            (
+                "neotrehalose",
+                format!("WURCS=2.0/2,2,1/[{GLC_A}][{GLC_B}]/1-2/a1-b1"),
+                format!("WURCS=2.0/2,2,1/[{GLC_B}][{GLC_A}]/1-2/a1-b1"),
+            ),
+            // The bond need not be the whole glycan: the galactose stays on
+            // the glucose whichever residue the glycan is written from.
+            (
+                "raffinose",
+                format!("WURCS=2.0/3,3,2/[{GLC_A}][{gal_a}][{FRU_B}]/1-2-3/a6-b1_a1-c2"),
+                format!("WURCS=2.0/3,3,2/[{FRU_B}][{GLC_A}][{gal_a}]/1-2-3/a2-b1_b6-c1"),
+            ),
+        ] {
+            let left = parse_notation(&left, Format::Auto).unwrap();
+            let right = parse_notation(&right, Format::Auto).unwrap();
+            assert!(
+                same_structure(&left, &right),
+                "{name}: {:?} and {:?}",
+                structure_key(&left),
+                structure_key(&right)
+            );
+            // Nothing else may move: the two still write as they were given.
+            assert_ne!(
+                core::write_wurcs(&left).unwrap(),
+                core::write_wurcs(&right).unwrap(),
+                "{name}"
+            );
+        }
+
+        // Read from a molecule, it is the same structure as either spelling.
+        let spelled = format!("WURCS=2.0/2,2,1/[{FRU_B}][{GLC_A}]/1-2/a2-b1");
+        let spelled = parse_notation(&spelled, Format::Wurcs).unwrap();
+        let smiles = write_notation(&spelled, Format::Smiles).unwrap();
+        let read = parse_notation(&smiles, Format::Smiles).unwrap();
+        assert!(same_structure(&spelled, &read));
+    }
+
+    #[test]
+    fn a_non_reducing_sugar_is_still_told_from_its_isomers() {
+        let trehalose = |first, second| {
+            let (residues, sequence) = if first == second {
+                (format!("1,2,1/[{first}]"), "1-1")
+            } else {
+                (format!("2,2,1/[{first}][{second}]"), "1-2")
+            };
+            let wurcs = format!("WURCS=2.0/{residues}/{sequence}/a1-b1");
+            parse_notation(&wurcs, Format::Wurcs).unwrap()
+        };
+        let alpha_alpha = trehalose(GLC_A, GLC_A);
+        let beta_beta = trehalose(GLC_B, GLC_B);
+        let alpha_beta = trehalose(GLC_A, GLC_B);
+        assert!(!same_structure(&alpha_alpha, &beta_beta));
+        assert!(!same_structure(&alpha_alpha, &alpha_beta));
+        assert!(!same_structure(&beta_beta, &alpha_beta));
+
+        // A different ketose anomer, and a different position on the ketose.
+        let sucrose = parse_notation(
+            &format!("WURCS=2.0/2,2,1/[{GLC_A}][{FRU_B}]/1-2/a1-b2"),
+            Format::Wurcs,
+        )
+        .unwrap();
+        let other_anomer = parse_notation(
+            &format!("WURCS=2.0/2,2,1/[{GLC_A}][ha122h-2a_2-5]/1-2/a1-b2"),
+            Format::Wurcs,
+        )
+        .unwrap();
+        let reducing = parse_notation(
+            &format!("WURCS=2.0/2,2,1/[{FRU_B}][{GLC_A}]/1-2/a3-b1"),
+            Format::Wurcs,
+        )
+        .unwrap();
+        assert!(!same_structure(&sucrose, &other_anomer));
+        assert!(!same_structure(&sucrose, &reducing));
+    }
+
+    #[test]
+    fn a_glycan_with_a_reducing_end_keeps_its_key() {
+        for notation in [
+            "Gal(b1-4)GlcNAc",
+            // An open position on an open anomer is not an anomeric bond.
+            "Gal(b1-?)GlcNAc",
+            "Gal(?1-?)GlcNAc",
+            "Neu5Ac(a2-3)Gal(b1-4)[Fuc(a1-3)]GlcNAc",
+            "Man(a1-3)[Man(a1-6)]Man(b1-4)GlcNAc(b1-4)GlcNAc",
+        ] {
+            let graph = parse_notation(notation, Format::Auto).unwrap();
+            assert_eq!(structure_key(&graph), core::write_wurcs(&graph).ok());
+        }
+        for record in corpus_records() {
+            let graph = core::parse_wurcs(record.wurcs).unwrap();
+            let reducing = graph.root().and_then(|root| {
+                let anomeric = graph.residue(root)?.anomeric_position;
+                let bonded = graph.children(root).iter().any(|child| {
+                    graph
+                        .inner()
+                        .find_edge(root, *child)
+                        .is_some_and(|edge| graph.inner()[edge].parent_position.0 == anomeric)
+                });
+                (!bonded).then_some(())
+            });
+            if reducing.is_some() {
+                assert_eq!(structure_key(&graph), core::write_wurcs(&graph).ok());
+            }
+        }
     }
 
     #[test]
