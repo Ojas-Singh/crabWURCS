@@ -1030,6 +1030,17 @@ struct FloatingBand {
     items: Vec<FloatingItem>,
 }
 
+impl FloatingBand {
+    /// The lanes the band draws on itself. Fragments are in the layout.
+    fn lanes(&self) -> impl Iterator<Item = f64> + Clone + '_ {
+        let labels = self.items.iter().filter_map(|item| match item {
+            FloatingItem::Substituent(_, lane) => Some(*lane),
+            FloatingItem::Fragment(_) => None,
+        });
+        std::iter::once(self.lane).chain(labels)
+    }
+}
+
 /// Gap between a bracket and whatever is drawn next to it, in layout pixels.
 const FLOATING_GAP: f64 = 60.0;
 /// How far from the stem a floating fragment starts, in residues.
@@ -1796,7 +1807,7 @@ fn render_svg_internal(
     let lanes = layout
         .values()
         .map(|li| li.y)
-        .chain(bands.iter().map(|band| band.lane));
+        .chain(bands.iter().flat_map(FloatingBand::lanes));
     let min_y = lanes.clone().fold(f64::MAX, f64::min);
     let max_y = lanes.fold(f64::MIN, f64::max);
     let label_reach = bands
@@ -4144,9 +4155,17 @@ mod tests {
         assert_eq!(svg.matches("{Ac?}").count(), 1);
         assert_eq!(svg.matches("class=\"bracket\"").count(), 1);
         assert_on_canvas(&svg, "floating substituent");
-        // The label's box stays on the canvas too.
-        let body = &svg[svg.find("</style>").unwrap()..];
-        assert!(attributes(body, &["x"]).into_iter().all(|x| x >= 0.0));
+        // The label's box stays on the canvas too, however tight the margins.
+        for compact in [false, true] {
+            let opts = RenderOptions {
+                compact,
+                ..opts.clone()
+            };
+            let svg = render_svg_with_options(&graph, &opts).unwrap();
+            let body = &svg[svg.find("</style>").unwrap()..];
+            assert!(attributes(body, &["x"]).into_iter().all(|x| x >= 0.0));
+            assert!(attributes(body, &["y"]).into_iter().all(|y| y >= 0.0));
+        }
     }
 
     #[test]
