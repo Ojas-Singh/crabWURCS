@@ -13,7 +13,7 @@ pub use model::{
     ProbabilityValue, RepeatCount, ResidueGraph, RingClosure, Stereo, UndefinedLinkage,
     UndefinedModification, UndefinedParent,
 };
-pub use motif::{MotifError, MotifMatch, find_motif_matches};
+pub use motif::{MotifError, MotifMatch, MotifPosition, MotifQuery, find_motif_matches};
 pub use registry::{
     ResidueKind, classify_residue, classify_residue_configuration, mirror_skeleton_code,
     residue_from_kind,

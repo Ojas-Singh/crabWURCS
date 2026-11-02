@@ -1,4 +1,7 @@
-use petgraph::graph::{Graph, NodeIndex};
+use petgraph::Direction;
+use petgraph::graph::{EdgeIndex, Graph, NodeIndex};
+use petgraph::visit::EdgeRef;
+use std::collections::BTreeSet;
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -555,6 +558,43 @@ impl ResidueGraph {
     pub fn set_composition(&mut self, composition: bool) {
         self.clear_sources();
         self.composition = composition;
+    }
+
+    /// `node` and the residues on its non-reducing side, through ordinary
+    /// bonds (repeat and cycle closures are not followed).
+    pub fn subtree(&self, node: NodeIndex) -> BTreeSet<usize> {
+        let mut seen = BTreeSet::new();
+        let mut stack = vec![node];
+        while let Some(next) = stack.pop() {
+            if seen.insert(next.index()) {
+                stack.extend(
+                    self.graph
+                        .edges_directed(next, Direction::Outgoing)
+                        .filter(|edge| edge.weight().repeat.is_none() && !edge.weight().cyclic)
+                        .map(|edge| edge.target()),
+                );
+            }
+        }
+        seen
+    }
+
+    /// The residues a repeat-closing edge spans: everything from the
+    /// reducing-side end of the unit to its other end, with side branches
+    /// but without what the far end carries beyond the unit (a cap).
+    pub fn repeat_unit(&self, edge: EdgeIndex) -> BTreeSet<usize> {
+        let Some((first, second)) = self.graph.edge_endpoints(edge) else {
+            return BTreeSet::new();
+        };
+        let (near, far) = if self.subtree(first).contains(&second.index()) {
+            (first, second)
+        } else if self.subtree(second).contains(&first.index()) {
+            (second, first)
+        } else {
+            return BTreeSet::from([first.index(), second.index()]);
+        };
+        let mut beyond = self.subtree(far);
+        beyond.remove(&far.index());
+        self.subtree(near).difference(&beyond).copied().collect()
     }
 
     pub fn node_count(&self) -> usize {
