@@ -8,7 +8,11 @@
 //! Parsing, notation conversion, de-novo molecular interop, PDB/mmCIF
 //! extraction, and SNFG rendering are implemented in the workspace crates.
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use crabwurcs::{
+    Adduct, GridOptions, HighlightSelection, MassOptions, MotifPosition, MotifQuery, Orientation,
+    ReducingEnd, RenderOptions,
+};
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -133,6 +137,77 @@ impl From<ChemFormatArg> for crabwurcs::mol::ChemFormat {
     }
 }
 
+/// How a glycan is drawn, shared by `render` and `grid`.
+#[derive(Args, Clone, Debug, Default)]
+struct DrawingArgs {
+    /// Where the reducing end goes: root-right (the SNFG convention),
+    /// root-left, root-bottom or root-top.
+    #[arg(long)]
+    orientation: Option<Orientation>,
+    /// Tighter spacing and no linkage text, for heatmap axes and tables.
+    #[arg(long)]
+    compact: bool,
+    /// Text drawn past the reducing end, such as Asn, Ser/Thr or 2-AB.
+    #[arg(long, value_name = "TEXT")]
+    reducing_end: Option<String>,
+    /// Draw repeat units in square brackets with their repeat count.
+    #[arg(long)]
+    repeat_brackets: bool,
+    /// Draw undefined antennae and substituents above the structure.
+    #[arg(long)]
+    floating_fragments: bool,
+}
+
+impl DrawingArgs {
+    fn options(&self) -> RenderOptions {
+        RenderOptions {
+            orientation: self.orientation.unwrap_or_default(),
+            compact: self.compact,
+            reducing_end: self.reducing_end.clone(),
+            repeat_brackets: self.repeat_brackets,
+            floating_fragments: self.floating_fragments,
+            ..RenderOptions::default()
+        }
+    }
+}
+
+/// What `render` highlights besides `--highlight-motif`.
+#[derive(Args, Clone, Debug, Default)]
+struct HighlightArgs {
+    /// Comma-separated positions for one --highlight-motif, in the order its
+    /// residues are read (terminal, internal, reducing, flexible). Given
+    /// once per motif, in the same order; motifs after the last one keep the
+    /// positions of their name, or none.
+    #[arg(long = "motif-positions", value_name = "POSITIONS")]
+    motif_positions: Vec<String>,
+    /// Residue to highlight, by its node index. May be repeated.
+    #[arg(long = "highlight-residue", value_name = "INDEX")]
+    highlight_residues: Vec<usize>,
+    /// Fragment ion to mark on its bond, such as B2 or Y3α. May be repeated.
+    #[arg(long = "cleavage", value_name = "ION")]
+    cleavages: Vec<String>,
+}
+
+/// What a glycan is derivatized with, for `mass` and `fragments`.
+#[derive(Args, Clone, Debug, Default)]
+struct MassArgs {
+    /// free, reduced, 2-ab, 2-aa or procainamide.
+    #[arg(long, default_value = "free")]
+    reducing_end: ReducingEnd,
+    /// Methylate every free OH, NH and carboxyl group.
+    #[arg(long)]
+    permethylated: bool,
+}
+
+impl MassArgs {
+    fn options(&self) -> MassOptions {
+        MassOptions {
+            reducing_end: self.reducing_end,
+            permethylated: self.permethylated,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Convert between WURCS, IUPAC, GLYCAM, and SMILES.
@@ -216,6 +291,90 @@ enum Command {
         /// Notation used by every --highlight-motif value.
         #[arg(long, value_enum, default_value = "auto")]
         motif_from: MotifTextFormat,
+        #[command(flatten)]
+        highlights: HighlightArgs,
+        #[command(flatten)]
+        drawing: DrawingArgs,
+    },
+
+    /// Draw many glycans on one SVG or PNG canvas. The input file holds one
+    /// notation per line, with an optional tab and caption.
+    Grid {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(long, value_enum, default_value = "auto")]
+        from: TextFormat,
+        #[arg(long, default_value_t = 4)]
+        columns: usize,
+        #[command(flatten)]
+        drawing: DrawingArgs,
+    },
+
+    /// Print the composition, formula and masses of a glycan.
+    Mass {
+        /// Glycan notation string, or a file path if `--input-file` is set.
+        /// Reads stdin if omitted.
+        input: Option<String>,
+        #[arg(long)]
+        input_file: bool,
+        #[arg(long, value_enum, default_value = "auto")]
+        from: TextFormat,
+        #[command(flatten)]
+        mass: MassArgs,
+        /// Also print the m/z with this adduct: H, Na, K, NH4, Li, -H, Cl,
+        /// HCOO or CH3COO. May be repeated.
+        #[arg(long = "adduct", allow_hyphen_values = true)]
+        adducts: Vec<Adduct>,
+        /// Adducts per ion, which is also the charge.
+        #[arg(long, default_value_t = 1)]
+        charge: u32,
+    },
+
+    /// List the B, C, Y and Z ions of every glycosidic cleavage.
+    Fragments {
+        input: Option<String>,
+        #[arg(long)]
+        input_file: bool,
+        #[arg(long, value_enum, default_value = "auto")]
+        from: TextFormat,
+        #[command(flatten)]
+        mass: MassArgs,
+        #[arg(long, default_value = "H", allow_hyphen_values = true)]
+        adduct: Adduct,
+    },
+
+    /// Count the occurrences of a motif, given as a notation or a name from
+    /// the library (see `motifs`). Fails if it does not occur.
+    Motif {
+        motif: String,
+        input: Option<String>,
+        #[arg(long)]
+        input_file: bool,
+        #[arg(long, value_enum, default_value = "auto")]
+        from: TextFormat,
+        #[arg(long, value_enum, default_value = "auto")]
+        motif_from: MotifTextFormat,
+        /// Comma-separated positions of the motif's residues.
+        #[arg(long)]
+        positions: Option<String>,
+    },
+
+    /// List the motif library, or the library motifs a glycan holds.
+    Motifs {
+        input: Option<String>,
+        #[arg(long)]
+        input_file: bool,
+        #[arg(long, value_enum, default_value = "auto")]
+        from: TextFormat,
+    },
+
+    /// Compare two glycans, in any notations. Fails if they differ.
+    Same {
+        left: String,
+        right: String,
+        #[arg(long, value_enum, default_value = "auto")]
+        from: TextFormat,
     },
 }
 
@@ -246,6 +405,8 @@ fn main() -> ExitCode {
             from,
             highlight_motifs,
             motif_from,
+            highlights,
+            drawing,
         } => run_render(
             input,
             input_file,
@@ -253,7 +414,45 @@ fn main() -> ExitCode {
             from,
             highlight_motifs,
             motif_from,
+            &highlights,
+            &drawing,
         ),
+        Command::Grid {
+            input,
+            output,
+            from,
+            columns,
+            drawing,
+        } => run_grid(&input, &output, from, columns, &drawing),
+        Command::Mass {
+            input,
+            input_file,
+            from,
+            mass,
+            adducts,
+            charge,
+        } => run_mass(input, input_file, from, &mass, &adducts, charge),
+        Command::Fragments {
+            input,
+            input_file,
+            from,
+            mass,
+            adduct,
+        } => run_fragments(input, input_file, from, &mass, adduct),
+        Command::Motif {
+            motif,
+            input,
+            input_file,
+            from,
+            motif_from,
+            positions,
+        } => run_motif(&motif, input, input_file, from, motif_from, positions),
+        Command::Motifs {
+            input,
+            input_file,
+            from,
+        } => run_motifs(input, input_file, from),
+        Command::Same { left, right, from } => run_same(&left, &right, from),
     };
 
     match result {
@@ -371,6 +570,13 @@ fn run_pdb_convert(
     Ok(())
 }
 
+fn parse_positions(text: &str) -> anyhow::Result<Vec<MotifPosition>> {
+    text.split(',')
+        .map(|position| position.parse().map_err(anyhow::Error::msg))
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_render(
     input: Option<String>,
     input_file: bool,
@@ -378,6 +584,8 @@ fn run_render(
     from_format: TextFormat,
     highlight_motifs: Vec<String>,
     motif_from: MotifTextFormat,
+    highlights: &HighlightArgs,
+    drawing: &DrawingArgs,
 ) -> anyhow::Result<()> {
     let text = read_text_input(input, input_file)?;
     let requested_format: crabwurcs::Format = from_format.into();
@@ -387,64 +595,214 @@ fn run_render(
         requested_format
     };
     let graph = crabwurcs::parse_notation(&text, actual_format)?;
-    let render_options = crabwurcs::snfg::RenderOptions {
+    let mut render_options = RenderOptions {
         source_notation: Some(crabwurcs::snfg::SourceNotation::new(
             format_name(actual_format),
             text.trim(),
         )),
-        ..crabwurcs::snfg::RenderOptions::default()
+        ..drawing.options()
     };
+    if !highlights.cleavages.is_empty() {
+        let fragments =
+            crabwurcs::glycan_fragments(&graph, &MassOptions::default(), Adduct::Proton)?;
+        for ion in &highlights.cleavages {
+            let fragment = fragments
+                .iter()
+                .find(|fragment| fragment.label == *ion)
+                .ok_or_else(|| anyhow::anyhow!("this glycan has no fragment ion {ion}"))?;
+            render_options
+                .cleavages
+                .push(crabwurcs::cleavage_mark(fragment));
+        }
+    }
     let output_kind = output
         .as_ref()
         .map(|path| render_output_kind(path))
         .transpose()?;
-    let motifs = highlight_motifs
-        .iter()
-        .enumerate()
-        .map(|(index, motif)| {
-            crabwurcs::parse_notation(motif, motif_from.into()).map_err(|error| {
-                anyhow::anyhow!(
-                    "failed to parse highlight motif {} ({motif:?}): {error}",
-                    index + 1
-                )
-            })
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    for (index, motif) in motifs.iter().enumerate() {
-        crabwurcs::find_motif_matches(&graph, motif).map_err(|error| {
+    if highlights.motif_positions.len() > highlight_motifs.len() {
+        anyhow::bail!("--motif-positions was given more often than --highlight-motif");
+    }
+    let mut selection = None::<HighlightSelection>;
+    for (index, motif) in highlight_motifs.iter().enumerate() {
+        let mut query = crabwurcs::resolve_motif(motif, motif_from.into()).map_err(|error| {
             anyhow::anyhow!(
-                "unsupported highlight motif {} ({:?}): {error}",
-                index + 1,
-                highlight_motifs[index]
+                "failed to parse highlight motif {} ({motif:?}): {error}",
+                index + 1
             )
         })?;
+        if let Some(positions) = highlights.motif_positions.get(index) {
+            query = MotifQuery::with_positions(query.motif().clone(), &parse_positions(positions)?)
+                .map_err(|error| {
+                    anyhow::anyhow!("highlight motif {} ({motif:?}): {error}", index + 1)
+                })?;
+        }
+        let matches = query.find(&graph).map_err(|error| {
+            anyhow::anyhow!(
+                "unsupported highlight motif {} ({motif:?}): {error}",
+                index + 1
+            )
+        })?;
+        let found = HighlightSelection::from_matches(&matches);
+        let union = selection.get_or_insert_with(HighlightSelection::default);
+        union.node_indices.extend(found.node_indices);
+        union.edge_indices.extend(found.edge_indices);
     }
+    if !highlights.highlight_residues.is_empty() {
+        let found =
+            HighlightSelection::from_residues(&graph, highlights.highlight_residues.clone())?;
+        let union = selection.get_or_insert_with(HighlightSelection::default);
+        union.node_indices.extend(found.node_indices);
+        union.edge_indices.extend(found.edge_indices);
+    }
+    let render_svg = || match &selection {
+        Some(selection) => {
+            crabwurcs::snfg::render_svg_with_selection(&graph, selection, &render_options)
+        }
+        None => crabwurcs::snfg::render_svg_with_options(&graph, &render_options),
+    };
     match (output, output_kind) {
-        (None, None) => {
-            let svg = if motifs.is_empty() {
-                crabwurcs::snfg::render_svg_with_options(&graph, &render_options)?
-            } else {
-                crabwurcs::snfg::render_svg_with_motifs(&graph, &motifs, &render_options)?
-            };
-            println!("{svg}");
-        }
-        (Some(path), Some(RenderOutputKind::Svg)) => {
-            let svg = if motifs.is_empty() {
-                crabwurcs::snfg::render_svg_with_options(&graph, &render_options)?
-            } else {
-                crabwurcs::snfg::render_svg_with_motifs(&graph, &motifs, &render_options)?
-            };
-            std::fs::write(path, svg)?;
-        }
+        (None, None) => println!("{}", render_svg()?),
+        (Some(path), Some(RenderOutputKind::Svg)) => std::fs::write(path, render_svg()?)?,
         (Some(path), Some(RenderOutputKind::Png)) => {
-            let png = if motifs.is_empty() {
-                crabwurcs::snfg::render_png_with_options(&graph, &render_options)?
-            } else {
-                crabwurcs::snfg::render_png_with_motifs(&graph, &motifs, &render_options)?
+            let png = match &selection {
+                Some(selection) => {
+                    crabwurcs::snfg::render_png_with_selection(&graph, selection, &render_options)?
+                }
+                None => crabwurcs::snfg::render_png_with_options(&graph, &render_options)?,
             };
             std::fs::write(path, png)?;
         }
         _ => unreachable!("output path and inferred kind must be present together"),
+    }
+    Ok(())
+}
+
+fn run_grid(
+    input: &std::path::Path,
+    output: &std::path::Path,
+    from: TextFormat,
+    columns: usize,
+    drawing: &DrawingArgs,
+) -> anyhow::Result<()> {
+    let kind = render_output_kind(output)?;
+    let text = std::fs::read_to_string(input)?;
+    let mut graphs = Vec::new();
+    let mut labels = Vec::new();
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let (notation, label) = line.split_once('\t').unwrap_or((line, ""));
+        graphs.push(crabwurcs::parse_notation(notation.trim(), from.into())?);
+        labels.push(label.trim().to_owned());
+    }
+    let options = GridOptions {
+        columns,
+        labels,
+        render: drawing.options(),
+    };
+    match kind {
+        RenderOutputKind::Svg => {
+            std::fs::write(output, crabwurcs::render_grid_svg(&graphs, &options)?)?;
+        }
+        RenderOutputKind::Png => {
+            std::fs::write(output, crabwurcs::render_grid_png(&graphs, &options)?)?;
+        }
+    }
+    Ok(())
+}
+
+fn read_graph(
+    input: Option<String>,
+    input_file: bool,
+    from: TextFormat,
+) -> anyhow::Result<crabwurcs::ResidueGraph> {
+    Ok(crabwurcs::parse_notation(
+        read_text_input(input, input_file)?.trim(),
+        from.into(),
+    )?)
+}
+
+fn run_mass(
+    input: Option<String>,
+    input_file: bool,
+    from: TextFormat,
+    mass: &MassArgs,
+    adducts: &[Adduct],
+    charge: u32,
+) -> anyhow::Result<()> {
+    let graph = read_graph(input, input_file, from)?;
+    let found = crabwurcs::glycan_mass(&graph, &mass.options())?;
+    println!("composition\t{}", crabwurcs::glycan_composition(&graph));
+    println!("formula\t{}", found.formula);
+    println!("monoisotopic\t{:.4}", found.monoisotopic);
+    println!("average\t{:.4}", found.average);
+    for adduct in adducts {
+        println!(
+            "mz {} x{charge}\t{:.4}",
+            adduct.as_str(),
+            found.mz(*adduct, charge)?
+        );
+    }
+    Ok(())
+}
+
+fn run_fragments(
+    input: Option<String>,
+    input_file: bool,
+    from: TextFormat,
+    mass: &MassArgs,
+    adduct: Adduct,
+) -> anyhow::Result<()> {
+    let graph = read_graph(input, input_file, from)?;
+    for fragment in crabwurcs::glycan_fragments(&graph, &mass.options(), adduct)? {
+        println!(
+            "{}\t{:.4}\t{}",
+            fragment.label, fragment.mz, fragment.formula
+        );
+    }
+    Ok(())
+}
+
+fn run_motif(
+    motif: &str,
+    input: Option<String>,
+    input_file: bool,
+    from: TextFormat,
+    motif_from: MotifTextFormat,
+    positions: Option<String>,
+) -> anyhow::Result<()> {
+    let graph = read_graph(input, input_file, from)?;
+    let mut query = crabwurcs::resolve_motif(motif, motif_from.into())?;
+    if let Some(positions) = positions {
+        query = MotifQuery::with_positions(query.motif().clone(), &parse_positions(&positions)?)?;
+    }
+    let count = query.count_in(&graph)?;
+    println!("{count}");
+    if count == 0 {
+        anyhow::bail!("the glycan does not contain {motif}");
+    }
+    Ok(())
+}
+
+fn run_motifs(input: Option<String>, input_file: bool, from: TextFormat) -> anyhow::Result<()> {
+    if input.is_none() && !input_file {
+        for motif in crabwurcs::named_motifs() {
+            println!("{}\t{}", motif.name, motif.iupac);
+        }
+        return Ok(());
+    }
+    let graph = read_graph(input, input_file, from)?;
+    for name in crabwurcs::annotate_motifs(&graph) {
+        println!("{name}");
+    }
+    Ok(())
+}
+
+fn run_same(left: &str, right: &str, from: TextFormat) -> anyhow::Result<()> {
+    let left = crabwurcs::parse_notation(left, from.into())?;
+    let right = crabwurcs::parse_notation(right, from.into())?;
+    let same = crabwurcs::same_structure(&left, &right);
+    println!("{same}");
+    if !same {
+        anyhow::bail!("the glycans differ");
     }
     Ok(())
 }
@@ -633,6 +991,258 @@ mod tests {
         );
     }
 
+    fn scratch(name: &str) -> PathBuf {
+        let directory =
+            std::env::temp_dir().join(format!("crabwurcs-{name}-test-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        directory
+    }
+
+    #[test]
+    fn render_takes_the_drawing_flags() {
+        let cli = Cli::try_parse_from([
+            "crabwurcs",
+            "render",
+            "--orientation",
+            "top-down",
+            "--compact",
+            "--reducing-end",
+            "Asn",
+            "--repeat-brackets",
+            "--floating-fragments",
+            "--highlight-residue",
+            "0",
+            "--highlight-residue",
+            "2",
+            "--highlight-motif",
+            "LewisX",
+            "--motif-positions",
+            "terminal,terminal,flexible",
+            "--cleavage",
+            "B1",
+            "Gal(b1-4)GlcNAc",
+        ])
+        .unwrap();
+        let Command::Render {
+            highlights,
+            drawing,
+            ..
+        } = cli.command
+        else {
+            panic!("expected render command");
+        };
+        assert_eq!(drawing.orientation, Some(Orientation::RootTop));
+        let options = drawing.options();
+        assert!(options.compact && options.repeat_brackets && options.floating_fragments);
+        assert_eq!(options.reducing_end.as_deref(), Some("Asn"));
+        assert_eq!(highlights.highlight_residues, [0, 2]);
+        assert_eq!(highlights.cleavages, ["B1"]);
+        assert!(
+            Cli::try_parse_from(["crabwurcs", "render", "--orientation", "sideways", "Glc"])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn default_drawing_flags_are_the_default_options() {
+        let options = DrawingArgs::default().options();
+        let defaults = RenderOptions::default();
+        assert_eq!(options.orientation, defaults.orientation);
+        assert_eq!(options.compact, defaults.compact);
+        assert_eq!(options.reducing_end, defaults.reducing_end);
+        assert_eq!(options.repeat_brackets, defaults.repeat_brackets);
+        assert_eq!(options.floating_fragments, defaults.floating_fragments);
+    }
+
+    fn render_to_svg(
+        highlight_motifs: Vec<String>,
+        highlights: HighlightArgs,
+        drawing: DrawingArgs,
+    ) -> anyhow::Result<String> {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let number = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = scratch("highlight").join(format!("{number}.svg"));
+        run_render(
+            Some("Fuc(a1-3)GlcNAc(b1-4)Gal(b1-4)GlcNAc".into()),
+            false,
+            Some(path.clone()),
+            TextFormat::IupacCondensed,
+            highlight_motifs,
+            MotifTextFormat::Auto,
+            &highlights,
+            &drawing,
+        )?;
+        let svg = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        Ok(svg)
+    }
+
+    #[test]
+    fn residues_and_positional_motifs_are_highlighted() {
+        let residues = render_to_svg(
+            Vec::new(),
+            HighlightArgs {
+                highlight_residues: vec![0, 1],
+                ..HighlightArgs::default()
+            },
+            DrawingArgs::default(),
+        )
+        .unwrap();
+        assert_eq!(residues.matches("data-node-index").count(), 4);
+        assert_eq!(
+            residues
+                .matches("<g data-node-index=\"0\" class=\"motif-match\"")
+                .count(),
+            1
+        );
+
+        // Gal(b1-4)GlcNAc occurs once, and its Gal carries a GlcNAc.
+        let terminal = HighlightArgs {
+            motif_positions: vec!["terminal,flexible".into()],
+            ..HighlightArgs::default()
+        };
+        let motif = vec!["Gal(b1-4)GlcNAc".to_owned()];
+        let none = render_to_svg(motif.clone(), terminal, DrawingArgs::default()).unwrap();
+        assert_eq!(none.matches("class=\"motif-match\"").count(), 0);
+        let any = render_to_svg(
+            motif.clone(),
+            HighlightArgs::default(),
+            DrawingArgs::default(),
+        )
+        .unwrap();
+        assert_eq!(any.matches("class=\"motif-match\"").count(), 3);
+
+        let too_many = HighlightArgs {
+            motif_positions: vec!["flexible,flexible".into(), "flexible,flexible".into()],
+            ..HighlightArgs::default()
+        };
+        assert!(render_to_svg(motif, too_many, DrawingArgs::default()).is_err());
+    }
+
+    #[test]
+    fn a_cleavage_names_an_ion_of_the_glycan() {
+        let marks = HighlightArgs {
+            cleavages: vec!["B1\u{03B1}".into()],
+            ..HighlightArgs::default()
+        };
+        assert!(render_to_svg(Vec::new(), marks, DrawingArgs::default()).is_err());
+        let marks = HighlightArgs {
+            cleavages: vec!["Y2".into()],
+            ..HighlightArgs::default()
+        };
+        let svg = render_to_svg(Vec::new(), marks, DrawingArgs::default()).unwrap();
+        assert!(svg.contains(">Y2</text>"));
+    }
+
+    #[test]
+    fn the_analysis_commands_parse_and_run() {
+        let man5 = "Man(a1-3)[Man(a1-3)[Man(a1-6)]Man(a1-6)]Man(b1-4)GlcNAc(b1-4)GlcNAc";
+        let cli = Cli::try_parse_from([
+            "crabwurcs",
+            "mass",
+            "--reducing-end",
+            "2-AB",
+            "--adduct",
+            "Na",
+            "--adduct",
+            "-H",
+            "--charge",
+            "2",
+            man5,
+        ])
+        .unwrap();
+        let Command::Mass {
+            mass,
+            adducts,
+            charge,
+            ..
+        } = cli.command
+        else {
+            panic!("expected mass command");
+        };
+        assert_eq!(mass.reducing_end, ReducingEnd::TwoAb);
+        assert_eq!(adducts, [Adduct::Sodium, Adduct::Deprotonated]);
+        assert_eq!(charge, 2);
+
+        assert!(
+            run_mass(
+                Some(man5.into()),
+                false,
+                TextFormat::Auto,
+                &MassArgs::default(),
+                &[Adduct::Sodium],
+                1
+            )
+            .is_ok()
+        );
+        assert!(
+            run_mass(
+                Some("Foo".into()),
+                false,
+                TextFormat::Auto,
+                &MassArgs::default(),
+                &[],
+                1
+            )
+            .is_err()
+        );
+        assert!(
+            run_fragments(
+                Some(man5.into()),
+                false,
+                TextFormat::Auto,
+                &MassArgs::default(),
+                Adduct::Proton
+            )
+            .is_ok()
+        );
+        let motif = |motif, positions: Option<&str>| {
+            run_motif(
+                motif,
+                Some("Gal(b1-4)GlcNAc".into()),
+                false,
+                TextFormat::Auto,
+                MotifTextFormat::Auto,
+                positions.map(str::to_owned),
+            )
+        };
+        assert!(motif("LacNAc", None).is_ok());
+        assert!(motif("Gal(b1-4)GlcNAc", Some("terminal,reducing")).is_ok());
+        assert!(motif("Gal(b1-4)GlcNAc", Some("internal,reducing")).is_err());
+        assert!(motif("Gal(b1-4)GlcNAc", Some("terminal")).is_err());
+        assert!(motif("LewisX", None).is_err());
+        assert!(run_motifs(None, false, TextFormat::Auto).is_ok());
+        assert!(run_motifs(Some(man5.into()), false, TextFormat::Auto).is_ok());
+        assert!(run_same("Gal(b1-4)GlcNAc", "DGalpb1-4DGlcpNAc", TextFormat::Auto).is_ok());
+        assert!(run_same("Gal(b1-4)GlcNAc", "Gal(b1-3)GlcNAc", TextFormat::Auto).is_err());
+    }
+
+    #[test]
+    fn a_grid_reads_notations_and_captions_from_a_file() {
+        let directory = scratch("grid");
+        let list = directory.join("glycans.tsv");
+        std::fs::write(&list, "Gal(b1-4)GlcNAc\tLacNAc\n\nGlc\n").unwrap();
+        for name in ["grid.svg", "grid.png"] {
+            let output = directory.join(name);
+            run_grid(&list, &output, TextFormat::Auto, 2, &DrawingArgs::default()).unwrap();
+            assert!(std::fs::metadata(&output).unwrap().len() > 100);
+        }
+        let svg = std::fs::read_to_string(directory.join("grid.svg")).unwrap();
+        assert!(svg.contains(">LacNAc</text>"));
+        assert_eq!(svg.matches("<svg ").count(), 3);
+        assert!(
+            run_grid(
+                &list,
+                &directory.join("grid.jpg"),
+                TextFormat::Auto,
+                2,
+                &DrawingArgs::default()
+            )
+            .is_err()
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn render_output_format_is_inferred_case_insensitively() {
         assert_eq!(
@@ -672,6 +1282,8 @@ mod tests {
             TextFormat::IupacCondensed,
             Vec::new(),
             MotifTextFormat::Auto,
+            &HighlightArgs::default(),
+            &DrawingArgs::default(),
         )
         .unwrap();
         run_render(
@@ -681,6 +1293,8 @@ mod tests {
             TextFormat::IupacCondensed,
             Vec::new(),
             MotifTextFormat::Auto,
+            &HighlightArgs::default(),
+            &DrawingArgs::default(),
         )
         .unwrap();
 
