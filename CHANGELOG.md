@@ -89,6 +89,18 @@ structures outside that corpus.
   methyl glycoside. Whatever is bonded there now replaces the hydroxyl, and the
   anomer is read through that atom. Trehalose, sucrose and methyl glucoside match
   their PubChem structures.
+- **The sugar on an anomeric nitrogen is read.** A ring whose anomeric carbon
+  carries nitrogen was skipped without an error, so an N-glycan on an asparagine
+  lost its root GlcNAc: LacNAc on asparagine read as Gal. It is now a residue, its
+  anomer read through the nitrogen, and the asparagine is an aglycone like any
+  other. A bare amine stays a `1*N` substituent. The nitrogen of an aromatic or
+  cyclic base does not count, so nucleosides and nucleotide sugars read as before.
+  Bridges are still not read from molecules: what is past an anomeric nitrogen is
+  an aglycone, so a MAP bridge there reads as the sugar alone.
+- **Trehalose and sucrose are read.** Two anomeric carbons sharing one oxygen were
+  counted as two bonds, which failed. They are one bond now, from the residue WURCS
+  writes first, however the molecule is written. `MolError::AmbiguousGlycanFound`
+  no longer says corpus glycans matched, which was only ever one of its causes.
 
 ### API notes for Rust callers
 

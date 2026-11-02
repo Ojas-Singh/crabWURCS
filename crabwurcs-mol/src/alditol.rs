@@ -220,7 +220,7 @@ pub(crate) fn aglycone_alditol(
     let sugars = rings.iter().flat_map(backbone_atoms).collect::<Vec<_>>();
     rings.iter().find_map(|ring| {
         let aglycone = molecule
-            .neighbors(ring.anomeric_oxygen)
+            .neighbors(ring.anomeric_atom)
             .map(|(neighbor, _)| neighbor)
             .find(|neighbor| *neighbor != ring.carbons[0])?;
         if sugars.contains(&aglycone) || !atom_is(molecule, aglycone, "C") {
