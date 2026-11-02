@@ -27,6 +27,7 @@ use thiserror::Error;
 
 mod construct;
 mod map;
+pub mod mass;
 
 const SOURCE_CORPUS: &str = include_str!("../data/glycoshape_notations.tsv");
 const DERIVED_CORPUS: &str = include_str!("../data/glycoshape_derived_notations.tsv");

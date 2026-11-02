@@ -1610,7 +1610,117 @@ pub fn render_symbol_svg(residue: &Monosaccharide, opts: &RenderOptions) -> Snfg
     Ok(svg)
 }
 
-fn svg_to_png(svg: &str) -> SnfgResult<Vec<u8>> {
+/// Options of [`render_grid_svg`].
+#[derive(Debug, Clone)]
+pub struct GridOptions {
+    /// Number of columns; at least one is used.
+    pub columns: usize,
+    /// One caption per glycan, printed below it. Missing ones print nothing.
+    pub labels: Vec<String>,
+    /// How each glycan is drawn.
+    pub render: RenderOptions,
+}
+
+impl Default for GridOptions {
+    fn default() -> Self {
+        Self {
+            columns: 4,
+            labels: Vec::new(),
+            render: RenderOptions::default(),
+        }
+    }
+}
+
+/// The width and height a generated drawing declares.
+fn declared_size(svg: &str) -> (f64, f64) {
+    let header = &svg[..svg.find('>').unwrap_or(svg.len())];
+    let value = |name: &str| {
+        let pattern = format!(" {name}=\"");
+        header
+            .find(&pattern)
+            .map(|start| &header[start + pattern.len()..])
+            .and_then(|rest| rest.split('"').next())
+            .and_then(|number| number.parse().ok())
+            .unwrap_or(0.0)
+    };
+    (value("width"), value("height"))
+}
+
+/// Draw several glycans on one SVG canvas, in rows. Each cell keeps its own
+/// drawing and notations, with its element ids made unique.
+pub fn render_grid_svg(graphs: &[ResidueGraph], options: &GridOptions) -> SnfgResult<String> {
+    let columns = options.columns.max(1);
+    let scale = options.render.scale;
+    let cells = graphs
+        .iter()
+        .map(|graph| render_svg_with_options(graph, &options.render))
+        .collect::<SnfgResult<Vec<_>>>()?;
+    let sizes = cells
+        .iter()
+        .map(|cell| declared_size(cell))
+        .collect::<Vec<_>>();
+    let gap = 16.0 * scale;
+    let caption = LABEL_SIZE * scale * 1.5;
+    let label_of = |index: usize| options.labels.get(index).filter(|label| !label.is_empty());
+
+    let mut widths = vec![0.0f64; columns];
+    let mut heights = vec![0.0f64; cells.len().div_ceil(columns)];
+    for (index, (width, height)) in sizes.iter().enumerate() {
+        let (row, column) = (index / columns, index % columns);
+        let label_height = if label_of(index).is_some() {
+            caption
+        } else {
+            0.0
+        };
+        widths[column] = widths[column].max(*width);
+        heights[row] = heights[row].max(height + label_height);
+    }
+    let total = |sizes: &[f64]| sizes.iter().sum::<f64>() + gap * (sizes.len() + 1) as f64;
+    let (width, height) = (total(&widths), total(&heights));
+
+    let mut svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" role=\"img\" viewBox=\"0 0 {width} {height}\" width=\"{width}\" height=\"{height}\">\n<title>SNFG glycans</title>\n<style>\n  .grid-label {{ font-family: {}; font-size: {}px; fill: #000; text-anchor: middle; dominant-baseline: central; }}\n</style>\n",
+        options.render.font_family,
+        LABEL_SIZE * scale
+    );
+    for (index, cell) in cells.iter().enumerate() {
+        let (row, column) = (index / columns, index % columns);
+        let (cell_width, cell_height) = sizes[index];
+        let left = gap * (column + 1) as f64 + widths[..column].iter().sum::<f64>();
+        let top = gap * (row + 1) as f64 + heights[..row].iter().sum::<f64>();
+        let x = left + (widths[column] - cell_width) / 2.0;
+        let label = label_of(index);
+        let label_height = if label.is_some() { caption } else { 0.0 };
+        let y = top + (heights[row] - cell_height - label_height) / 2.0;
+        let cell = cell
+            .replacen("<svg ", &format!("<svg x=\"{x}\" y=\"{y}\" "), 1)
+            .replace("snfg-title", &format!("snfg-title-{index}"))
+            .replace("snfg-desc", &format!("snfg-desc-{index}"))
+            .replace(
+                "id=\"crabwurcs-notations\"",
+                &format!("id=\"crabwurcs-notations-{index}\""),
+            );
+        svg.push_str(&cell);
+        if let Some(label) = label {
+            svg.push_str(&format!(
+                "<text x=\"{}\" y=\"{}\" class=\"grid-label\">{}</text>\n",
+                left + widths[column] / 2.0,
+                top + heights[row] - caption / 2.0,
+                escape_xml_text(label)
+            ));
+        }
+    }
+    svg.push_str("</svg>\n");
+    Ok(svg)
+}
+
+/// [`render_grid_svg`] as a transparent PNG at twice its dimensions.
+pub fn render_grid_png(graphs: &[ResidueGraph], options: &GridOptions) -> SnfgResult<Vec<u8>> {
+    svg_to_png(&render_grid_svg(graphs, options)?)
+}
+
+/// Rasterize any SVG as a transparent PNG at twice its dimensions.
+pub fn svg_to_png(svg: &str) -> SnfgResult<Vec<u8>> {
     let mut options = resvg::usvg::Options::default();
     options.fontdb_mut().load_system_fonts();
     let tree = resvg::usvg::Tree::from_str(svg, &options)
@@ -4128,6 +4238,68 @@ mod tests {
             render_svg_with_options(&graph, &bad),
             Err(SnfgError::InvalidBondIndex { index: 7, count: 1 })
         ));
+    }
+
+    #[test]
+    fn a_grid_lays_cells_out_in_rows_with_unique_ids_and_captions() {
+        let graphs = [
+            iupac("Gal(b1-4)GlcNAc"),
+            iupac(N_GLYCAN),
+            iupac("Glc"),
+            iupac("Man(a1-3)Man"),
+            iupac("Gal"),
+        ];
+        let options = GridOptions {
+            columns: 2,
+            labels: vec!["LacNAc".into(), String::new(), "<Glc>".into()],
+            ..GridOptions::default()
+        };
+        let svg = render_grid_svg(&graphs, &options).unwrap();
+        assert_eq!(svg.matches("<svg ").count(), 6);
+        assert_eq!(svg.matches("class=\"grid-label\"").count(), 2);
+        assert!(svg.contains(">&lt;Glc&gt;</text>"));
+        for index in 0..5 {
+            assert_eq!(
+                svg.matches(&format!("id=\"snfg-title-{index}\"")).count(),
+                1,
+                "{index}"
+            );
+        }
+        assert!(!svg.contains("id=\"snfg-title\""));
+
+        // Every cell sits inside the canvas, in its own slot.
+        let (width, height) = canvas_size(&svg);
+        let mut placed = Vec::new();
+        for (index, cell) in svg.split("<svg x=\"").skip(1).enumerate() {
+            let cell = format!(" x=\"{cell}");
+            let header = &cell[..cell.find('>').unwrap()];
+            let (x, y) = (attributes(header, &["x"])[0], attributes(header, &["y"])[0]);
+            let (w, h) = (
+                attributes(header, &["width"])[0],
+                attributes(header, &["height"])[0],
+            );
+            assert!(x >= 0.0 && x + w <= width, "cell {index}");
+            assert!(y >= 0.0 && y + h <= height, "cell {index}");
+            placed.push((x, y, w, h));
+        }
+        for (first, a) in placed.iter().enumerate() {
+            for b in &placed[first + 1..] {
+                let apart =
+                    a.0 + a.2 <= b.0 || b.0 + b.2 <= a.0 || a.1 + a.3 <= b.1 || b.1 + b.3 <= a.1;
+                assert!(apart, "{a:?} and {b:?} overlap");
+            }
+        }
+
+        let png = render_grid_png(&graphs, &options).unwrap();
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+        let empty = render_grid_svg(&[], &GridOptions::default()).unwrap();
+        assert!(empty.contains("<svg"));
+        let no_columns = GridOptions {
+            columns: 0,
+            ..GridOptions::default()
+        };
+        let single = render_grid_svg(&graphs[..1], &no_columns).unwrap();
+        assert_eq!(single.matches("<svg ").count(), 2);
     }
 
     #[test]

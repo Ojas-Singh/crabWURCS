@@ -19,7 +19,7 @@ struct BuiltResidue {
     anomeric_position: usize,
 }
 
-fn carbon_descriptors(residue: &Monosaccharide) -> MolResult<Vec<char>> {
+pub(crate) fn carbon_descriptors(residue: &Monosaccharide) -> MolResult<Vec<char>> {
     let mut descriptors = Vec::new();
     let prefix = residue.anomeric_prefix.as_str();
     if prefix.starts_with("Aa") || prefix.starts_with("AU") {
@@ -71,7 +71,7 @@ fn backbone_bond_order(left: char, right: char) -> BondOrder {
     }
 }
 
-fn default_oxygen_bonds(descriptor: char, terminal: bool) -> MolResult<Vec<BondOrder>> {
+pub(crate) fn default_oxygen_bonds(descriptor: char, terminal: bool) -> MolResult<Vec<BondOrder>> {
     use BondOrder::{Double, Single, Triple};
     let bonds = match descriptor {
         'm' | 'd' | 'n' | 't' => vec![],
@@ -107,7 +107,7 @@ fn default_oxygen_bonds(descriptor: char, terminal: bool) -> MolResult<Vec<BondO
     Ok(bonds)
 }
 
-fn add_modification(
+pub(crate) fn add_modification(
     builder: &mut MoleculeBuilder,
     backbone: AtomIdx,
     descriptor: &str,
@@ -147,7 +147,7 @@ fn inferred_ring_positions(residue: &Monosaccharide, carbon_count: usize) -> (us
     (start, start + span)
 }
 
-fn effective_anomeric_position(residue: &Monosaccharide) -> usize {
+pub(crate) fn effective_anomeric_position(residue: &Monosaccharide) -> usize {
     if residue.anomeric_position > 0 {
         usize::from(residue.anomeric_position)
     } else if residue.anomeric_prefix.starts_with("AU") || residue.anomeric_prefix.starts_with("hU")
