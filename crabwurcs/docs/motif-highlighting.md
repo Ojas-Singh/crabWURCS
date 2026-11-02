@@ -84,6 +84,66 @@ PNG output is available through [`render_png_with_motifs`].
 
 [`render_png_with_motifs`]: https://docs.rs/crabwurcs-snfg/latest/crabwurcs_snfg/fn.render_png_with_motifs.html
 
+## Positions
+
+A [`MotifQuery`] says where each motif residue has to sit, in the order the
+residues are read in the motif's text, as GlycoDraw's `highlight_termini_list`:
+
+[`MotifQuery`]: https://docs.rs/crabwurcs-core/latest/crabwurcs_core/struct.MotifQuery.html
+
+| [`MotifPosition`] | The target residue |
+|---|---|
+| `Flexible` | may be anywhere |
+| `Terminal` | has nothing on its non-reducing side |
+| `Internal` | has a residue on its non-reducing side |
+| `Reducing` | is the reducing end of the glycan |
+
+[`MotifPosition`]: https://docs.rs/crabwurcs-core/latest/crabwurcs_core/enum.MotifPosition.html
+
+A candidate parent of an undefined fragment may carry that fragment, so it is
+not `Terminal`.
+
+```rust,ignore
+use crabwurcs::{HighlightSelection, MotifPosition::*, MotifQuery, RenderOptions};
+
+let target = crabwurcs::iupac::parse_iupac_condensed(
+    "Neu5Ac(a2-3)Gal(b1-4)GlcNAc(b1-2)Man(a1-3)[Gal(b1-4)GlcNAc(b1-2)Man(a1-6)]Man",
+).unwrap();
+let lacnac = crabwurcs::iupac::parse_iupac_condensed("Gal(b1-4)GlcNAc").unwrap();
+
+// Only the LacNAc that is not capped: its Gal must be terminal.
+let query = MotifQuery::with_positions(lacnac, &[Terminal, Flexible]).unwrap();
+let selection = HighlightSelection::from_matches(&query.find(&target).unwrap());
+let svg = crabwurcs::render_svg_with_selection(&target, &selection, &RenderOptions::default());
+```
+
+`HighlightSelection::from_residues` selects residues by node index instead, for
+residues known from PDB provenance or a fragment ion, with the bonds between
+them.
+
+## Named motifs
+
+`crabwurcs::named_motifs` lists a library of 27 motifs, and a motif string in
+`auto` format may be one of their names. Names ignore case, spaces and hyphens,
+so `sialyl-Lewis X` finds `SialylLewisX`.
+
+| Group | Names |
+|---|---|
+| Lewis epitopes | `LewisX`, `LewisA`, `LewisY`, `LewisB`, `SialylLewisX`, `SialylLewisA` |
+| Blood groups and others | `HType1`, `HType2`, `BloodGroupA`, `BloodGroupB`, `AlphaGal`, `Sda` |
+| Antennae | `LacNAc`, `LacNAcType1`, `LacdiNAc`, `PolyLacNAc`, `Sialyl3LacNAc`, `Sialyl6LacNAc` |
+| N-glycan cores | `NGlycanCore`, `CoreFucose`, `CoreFucoseAlpha3`, `BisectingGlcNAc` |
+| O-glycan cores | `Core1`, `Core2`, `Core3`, `Core4`, `SialylTn` |
+
+An epitope that is a cap by definition requires its non-reducing residues to be
+terminal, so `LewisX` is not found inside sialyl-Lewis X. A core requires its
+last residue to be the reducing end, so `CoreFucose` is not an antennal fucose.
+`LacNAc` is flexible, so it is also found in a capped antenna. A core 2 glycan
+holds `Core1` as well as `Core2`, because the first is a substructure of the
+second.
+
+`crabwurcs::annotate_motifs` names the library motifs a glycan holds.
+
 ## Motif constraints
 
 A motif must describe a connected, directed tree of known residues. The matcher
@@ -100,3 +160,4 @@ returns [`MotifError`] otherwise:
 | `CycleOrRepeat` | The motif contains a cycle or a repeat-closing edge. |
 | `UndefinedLinkage` | The motif contains an undefined (candidate-parent) linkage. |
 | `UndefinedModification` | The motif contains an undefined (candidate-parent) modification. |
+| `PositionCount` | The positions given do not match the motif's residues one to one. |

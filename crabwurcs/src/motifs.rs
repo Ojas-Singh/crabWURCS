@@ -237,6 +237,7 @@ mod tests {
 
     #[test]
     fn every_library_motif_parses_with_a_position_per_residue() {
+        assert_eq!(named_motifs().len(), 27);
         for motif in named_motifs() {
             let query = motif.query();
             assert_eq!(

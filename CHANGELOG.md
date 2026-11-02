@@ -1,5 +1,76 @@
 # Changelog
 
+## Unreleased
+
+Drawings can be laid out for a figure, uncertainty is drawn the SNFG way, and
+glycans can be weighed, searched and compared. Everything new is opt-in: the
+default rendering of every GlycoShape record, and every conversion, is
+unchanged byte for byte.
+
+- **Orientation and compact drawings.** `RenderOptions` gains `orientation`
+  (`RootRight`, the SNFG convention and the default, `RootLeft`, `RootBottom`,
+  `RootTop`) and `compact` (tighter spacing and no linkage text, for heatmap
+  axes and tables). The higher acceptor position of a branch stays above the
+  lower one in horizontal drawings and to its right in vertical ones.
+- **Reducing-end text.** `reducing_end` draws text such as `Asn`, `Ser/Thr` or
+  `2-AB` past the reducing end.
+- **Repeat brackets.** `repeat_brackets` draws a repeat unit in square brackets
+  with its count (`n`, `n = 3`, `n = 2–5`, `n ≥ 2`) instead of a dashed bond
+  closing it. A cap beyond the far end of the unit stays outside.
+- **Floating fragments.** `floating_fragments` draws undefined antennae and
+  substituents above the structure, over a bracket across their candidate
+  parents, instead of a dashed bond to each candidate.
+- **Positional and per-residue highlighting.** `MotifQuery` adds a position per
+  motif residue (`MotifPosition`: `Terminal`, `Internal`, `Reducing`,
+  `Flexible`), listed in the order the residues are read, as GlycoDraw's
+  `highlight_termini_list`. `HighlightSelection::from_matches` and
+  `from_residues` build a selection from motif occurrences or node indices.
+- **A library of named motifs.** `named_motif`, `named_motifs`, `resolve_motif`
+  and `annotate_motifs` know 27 motifs: Lewis and blood-group epitopes, LacNAc
+  variants, N-glycan core features and O-glycan cores. Their positions keep
+  `LewisX` out of sialyl-Lewis X and `CoreFucose` off an antenna. A motif string
+  in `auto` format may now be one of these names.
+- **Mass and composition.** `glycan_mass`, `glycan_formula` and
+  `glycan_composition` give the formula, monoisotopic and average mass, m/z with
+  an adduct, and a composition such as `HexNAc4Hex5Fuc1NeuAc2`, with reducing-end
+  derivatives (`Reduced`, `TwoAb`, `TwoAa`, `Procainamide`) and permethylation.
+  Residue formulas come from the molecular constructor; compositions, `?`
+  linkages and undefined fragments have a mass although they have no molecular
+  graph. Repeat ranges, probabilities and residues of unknown chemistry are a
+  typed `MassError`, and an exact repeat is multiplied out. Phosphocholine is
+  counted as its inner salt.
+- **Fragment ions.** `glycan_fragments` lists the Domon–Costello B, C, Y and Z
+  ions of every glycosidic cleavage, and `cleavage_mark` and
+  `RenderOptions::cleavages` mark them on the drawing.
+- **Structure comparison.** `structure_key` and `same_structure` compare
+  glycans whatever notation or residue numbering they came from. A stated
+  anomer or position is more than an open one.
+- **Grids and figures.** `render_grid_svg` and `render_grid_png` draw many
+  glycans on one canvas, and `svg_to_png` is public. Python's new
+  `crabwurcs.figures` has `render_grid`, `write_images`, and `annotate_svg` and
+  `annotate_figure`, which replace the glycan labels of any SVG or matplotlib
+  figure with their drawings.
+- **Command lines.** `render` gains `--orientation`, `--compact`,
+  `--reducing-end`, `--repeat-brackets`, `--floating-fragments`,
+  `--motif-positions`, `--highlight-residue` and `--cleavage`, and there are new
+  commands `grid`, `mass`, `fragments`, `motif`, `motifs` and `same`.
+- **Python.** `Glycan` gains `contains`, `count_motif`, `find_motif`, `motifs`,
+  `residues`, `composition`, `composition_string`, `formula`, `mass` and
+  `fragments`, and `Glycan.render` takes the new options as keyword arguments.
+  Glycans now compare and hash by structure, not identity. New exceptions:
+  `MassError` and `MotifError`.
+
+### Fixes
+
+- The Python command line writes SVG as UTF-8. `crabwurcs render --output` failed
+  on Windows for any glycan with a Greek linkage label.
+
+### API notes for Rust callers
+
+- `RenderOptions` has new fields: a struct literal needs `..Default::default()`.
+- `MotifError` gains `PositionCount`, and `SnfgError` gains
+  `InvalidResidueIndex` and `InvalidBondIndex`: an exhaustive `match` needs arms.
+
 ## 0.3.3 - 2026-10-15
 
 PDB/mmCIF reading derives glycan chemistry from the 3D coordinates, so a

@@ -151,12 +151,12 @@ def test_residues_describe_the_tree():
 def test_mass_formula_and_composition():
     man5 = glycan(MAN5)
     assert man5.formula() == "C46H78N2O36"
-    assert man5.mass() == pytest.approx(1234.4333, abs=0.0002)
+    assert man5.mass() == pytest.approx(1234.4334, abs=0.0001)
     assert man5.mass(average=True) == pytest.approx(1235.08, abs=0.05)
     assert man5.mass(adduct="Na") == pytest.approx(1257.4226, abs=0.0003)
     assert man5.mass(adduct="[M+Na]+") == man5.mass(adduct="Na")
-    assert man5.mass(adduct="H", charge=2) == pytest.approx(618.2239, abs=0.0003)
-    assert man5.mass(permethylated=True, adduct="Na") == pytest.approx(1579.78, abs=0.01)
+    assert man5.mass(adduct="H", charge=2) == pytest.approx(618.2240, abs=0.0001)
+    assert man5.mass(permethylated=True, adduct="Na") == pytest.approx(1579.7826, abs=0.0001)
     assert man5.mass(reducing_end="2-ab") - man5.mass() == pytest.approx(120.0687, abs=0.001)
     assert man5.composition() == {"HexNAc": 2, "Hex": 5}
     assert man5.composition_string() == "HexNAc2Hex5"

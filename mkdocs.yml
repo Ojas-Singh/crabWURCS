@@ -16,6 +16,7 @@ nav:
   - Python API: python-api.md
   - PDB and mmCIF: pdb.md
   - SNFG rendering: rendering.md
+  - Mass and fragments: mass.md
   - CLI: cli.md
   - Errors and limitations: errors.md
   - Reproducibility: reproducibility.md

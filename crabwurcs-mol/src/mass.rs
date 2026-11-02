@@ -1069,16 +1069,16 @@ mod tests {
         let graph = parse_wurcs(MAN5).unwrap();
         let native = glycan_mass(&graph, &free()).unwrap();
         assert_eq!(native.formula.to_string(), "C46H78N2O36");
-        close(native.monoisotopic, 1234.4333, 0.0002);
+        close(native.monoisotopic, 1234.4334, 0.0001);
         close(native.average, 1235.08, 0.05);
-        close(native.mz(Adduct::Sodium, 1).unwrap(), 1257.4226, 0.0003);
-        close(native.mz(Adduct::Proton, 1).unwrap(), 1235.4406, 0.0003);
+        close(native.mz(Adduct::Sodium, 1).unwrap(), 1257.4226, 0.0001);
+        close(native.mz(Adduct::Proton, 1).unwrap(), 1235.4407, 0.0001);
         close(
             native.mz(Adduct::Deprotonated, 1).unwrap(),
             1233.4261,
             0.0003,
         );
-        close(native.mz(Adduct::Proton, 2).unwrap(), 618.2239, 0.0003);
+        close(native.mz(Adduct::Proton, 2).unwrap(), 618.2240, 0.0001);
 
         // Permethylated Man5 is the 1579.8 peak of every N-glycan MALDI.
         let methylated = glycan_mass(
@@ -1089,7 +1089,7 @@ mod tests {
             },
         )
         .unwrap();
-        close(methylated.mz(Adduct::Sodium, 1).unwrap(), 1579.7835, 0.001);
+        close(methylated.mz(Adduct::Sodium, 1).unwrap(), 1579.7826, 0.0001);
 
         let reduced = glycan_mass(
             &graph,

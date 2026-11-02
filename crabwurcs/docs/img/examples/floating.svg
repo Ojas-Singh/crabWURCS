@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="snfg-title snfg-desc" viewBox="0 0 640 410" width="640" height="410">
+<title id="snfg-title">SNFG glycan: Gal(b1-4)GlcNAc(b1-4/6)=1$,Gal(b1-4)GlcNAc(b1-2)1$Man(a1-3)[GlcNAc(b1-2)1$Man(a1-6)]Man(b1-4)GlcNAc(b1-4)[Fuc(a1-6)]GlcNAc(?1-</title>
+<desc id="snfg-desc">Canonical IUPAC condensed: Gal(b1-4)GlcNAc(b1-4/6)=1$,Gal(b1-4)GlcNAc(b1-2)1$Man(a1-3)[GlcNAc(b1-2)1$Man(a1-6)]Man(b1-4)GlcNAc(b1-4)[Fuc(a1-6)]GlcNAc(?1-. Canonical WURCS: WURCS=2.0/6,11,10/[a2122h-1b_1-5_2*NCC/3=O][a2112h-1b_1-5][a2122h-1x_1-5_2*NCC/3=O][a1122h-1b_1-5][a1122h-1a_1-5][a1221m-1a_1-5]/1-2-3-1-4-5-1-2-5-1-6/a1-f4|f6|i4|i6}_a4-b1_c4-d1_c6-k1_d4-e1_e3-f1_e6-i1_f2-g1_g4-h1_i2-j1.</desc>
+<metadata id="crabwurcs-notations">
+<crabwurcs:notations xmlns:crabwurcs="https://github.com/Ojas-Singh/crabWURCS/ns/metadata/1">
+    <crabwurcs:iupac-condensed canonical="true" available="true">Gal(b1-4)GlcNAc(b1-4/6)=1$,Gal(b1-4)GlcNAc(b1-2)1$Man(a1-3)[GlcNAc(b1-2)1$Man(a1-6)]Man(b1-4)GlcNAc(b1-4)[Fuc(a1-6)]GlcNAc(?1-</crabwurcs:iupac-condensed>
+    <crabwurcs:wurcs canonical="true" available="true">WURCS=2.0/6,11,10/[a2122h-1b_1-5_2*NCC/3=O][a2112h-1b_1-5][a2122h-1x_1-5_2*NCC/3=O][a1122h-1b_1-5][a1122h-1a_1-5][a1221m-1a_1-5]/1-2-3-1-4-5-1-2-5-1-6/a1-f4|f6|i4|i6}_a4-b1_c4-d1_c6-k1_d4-e1_e3-f1_e6-i1_f2-g1_g4-h1_i2-j1</crabwurcs:wurcs>
+    <crabwurcs:source format="wurcs">WURCS=2.0/6,11,10/[a2122h-1x_1-5_2*NCC/3=O][a2122h-1b_1-5_2*NCC/3=O][a1122h-1b_1-5][a1122h-1a_1-5][a2112h-1b_1-5][a1221m-1a_1-5]/1-2-3-4-2-5-4-2-6-2-5/a4-b1_a6-i1_b4-c1_c3-d1_c6-g1_d2-e1_e4-f1_g2-h1_j4-k1_j1-d4|d6|g4|g6}</crabwurcs:source>
+  </crabwurcs:notations>
+</metadata>
+<style>
+  .bond { stroke: #000; stroke-width: 4; fill: none; stroke-linecap: round; }
+  .uncertain { stroke: #555; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-dasharray: 8 7; }
+  .link { font-family: Arial, Helvetica, sans-serif; font-size: 20px; fill: #000; text-anchor: middle; dominant-baseline: central; }
+  .mod-label { font-family: Arial, Helvetica, sans-serif; font-size: 20px; fill: #000; text-anchor: middle; dominant-baseline: central; }
+  .node { fill: none; }
+  .res-label { font-family: Arial, Helvetica, sans-serif; font-size: 11px; fill: #000; text-anchor: middle; dominant-baseline: central; }
+  .bracket { fill: none; stroke-width: 2.5; stroke-linecap: square; }
+</style>
+<line x1="570" y1="290" x2="470" y2="290" class="bond"/>
+<text x="0" y="0" class="link" transform="translate(520,276) rotate(0)">β 4</text>
+<line x1="570" y1="290" x2="570" y2="190" class="bond"/>
+<text x="0" y="0" class="link" transform="translate(556,240) rotate(-90)">α 6</text>
+<line x1="470" y1="290" x2="370" y2="290" class="bond"/>
+<text x="0" y="0" class="link" transform="translate(420,276) rotate(0)">β 4</text>
+<line x1="370" y1="290" x2="270" y2="340" class="bond"/>
+<text x="0" y="0" class="link" transform="translate(313.7390096630006,302.4780193260012) rotate(-26.565051177078004)">α 3</text>
+<line x1="370" y1="290" x2="270" y2="240" class="bond"/>
+<text x="0" y="0" class="link" transform="translate(326.2609903369994,252.47801932600117) rotate(26.565051177078004)">α 6</text>
+<line x1="270" y1="340" x2="170" y2="340" class="bond"/>
+<text x="0" y="0" class="link" transform="translate(220,326) rotate(0)">β 2</text>
+<line x1="170" y1="340" x2="70" y2="340" class="bond"/>
+<text x="0" y="0" class="link" transform="translate(120,326) rotate(0)">β 4</text>
+<line x1="270" y1="240" x2="170" y2="240" class="bond"/>
+<text x="0" y="0" class="link" transform="translate(220,226) rotate(0)">β 2</text>
+<line x1="200" y1="70" x2="100" y2="70" class="bond"/>
+<text x="0" y="0" class="link" transform="translate(150,56) rotate(0)">β 4</text>
+<g data-floating-band="true">
+<path d="M300 130 L240 130 M300 130 L300 142 M240 130 L240 142" class="bracket" stroke="#000000"/>
+<line x1="270" y1="130" x2="270" y2="70" class="uncertain"/>
+<line x1="270" y1="70" x2="200" y2="70" class="uncertain"/>
+<text x="0" y="0" class="link" transform="translate(252.5,56) rotate(0)">β ?</text>
+</g>
+<rect x="545" y="265" width="50" height="50" fill="#0072BC" stroke="#000000" stroke-width="2"/>
+<rect x="445" y="265" width="50" height="50" fill="#0072BC" stroke="#000000" stroke-width="2"/>
+<circle cx="370" cy="290" r="25" fill="#00A651" stroke="#000000" stroke-width="2"/>
+<circle cx="270" cy="340" r="25" fill="#00A651" stroke="#000000" stroke-width="2"/>
+<rect x="145" y="315" width="50" height="50" fill="#0072BC" stroke="#000000" stroke-width="2"/>
+<circle cx="70" cy="340" r="25" fill="#FFD400" stroke="#000000" stroke-width="2"/>
+<circle cx="270" cy="240" r="25" fill="#00A651" stroke="#000000" stroke-width="2"/>
+<rect x="145" y="215" width="50" height="50" fill="#0072BC" stroke="#000000" stroke-width="2"/>
+<polygon points="570,161.1189 545,204.4189 595,204.4189" fill="#ED1C24" stroke="#000000" stroke-width="2"/>
+<rect x="175" y="45" width="50" height="50" fill="#0072BC" stroke="#000000" stroke-width="2"/>
+<circle cx="100" cy="70" r="25" fill="#FFD400" stroke="#000000" stroke-width="2"/>
+</svg>

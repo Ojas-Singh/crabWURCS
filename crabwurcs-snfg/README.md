@@ -15,6 +15,8 @@ This crate implements the complete SNFG 2.0.4 specification for rendering glycan
 - **Raster output**: High-resolution PNG generation
 - **Accessible output**: Includes title/description elements and structured metadata
 - **Motif highlighting**: Wildcard-aware structural motif matching
+- **Figure layouts**: Four orientations, compact drawings and grids of glycans
+- **SNFG uncertainty**: Repeat brackets, floating fragments and cleavage marks
 
 ## Features
 
