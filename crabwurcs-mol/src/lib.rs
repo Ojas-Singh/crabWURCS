@@ -25,6 +25,7 @@ use crabwurcs_core::{
 };
 use thiserror::Error;
 
+mod alditol;
 mod construct;
 mod map;
 pub mod mass;
@@ -979,9 +980,30 @@ fn terminal_descriptor(molecule: &Molecule, ring: &DetectedSugarRing) -> char {
 }
 
 fn de_novo_wurcs_for_molecule(molecule: &Molecule) -> MolResult<ResidueGraph> {
+    de_novo_glycan(molecule, false)
+}
+
+/// The glycan with an alditol that `molecule` is, if it is exactly that. The
+/// formula has to come back, which is what tells a polyol from a lipid.
+fn alditol_glycan(molecule: &Molecule) -> Option<ResidueGraph> {
+    let graph = de_novo_glycan(molecule, true).ok()?;
+    if !graph.inner().node_weights().any(construct::is_alditol) {
+        return None;
+    }
+    let rebuilt = construct::construct_molecule(&graph).ok()?;
+    (rebuilt.total_formula() == molecule.total_formula()).then_some(graph)
+}
+
+fn de_novo_glycan(molecule: &Molecule, read_alditols: bool) -> MolResult<ResidueGraph> {
     let rings = detect_sugar_rings(molecule);
     if rings.is_empty() {
-        return Err(MolError::NoGlycanFound);
+        let found = read_alditols
+            .then(|| alditol::free_alditol(molecule))
+            .flatten()
+            .ok_or(MolError::NoGlycanFound)?;
+        let mut graph = ResidueGraph::new();
+        graph.add_residue(found.residue);
+        return Ok(graph);
     }
 
     let mut graph = ResidueGraph::new();
@@ -1065,6 +1087,10 @@ fn de_novo_wurcs_for_molecule(molecule: &Molecule) -> MolResult<ResidueGraph> {
             ))
         })
         .collect::<Vec<_>>();
+    let reducing_alditol = read_alditols
+        .then(|| alditol::aglycone_alditol(molecule, &rings))
+        .flatten()
+        .map(|found| (graph.add_residue(found.residue.clone()), found));
 
     let mut has_parent = vec![false; rings.len()];
     for (child_index, ring) in rings.iter().enumerate() {
@@ -1077,6 +1103,19 @@ fn de_novo_wurcs_for_molecule(molecule: &Molecule) -> MolResult<ResidueGraph> {
         };
         let Some((parent_index, parent_position)) = residue_and_position_for_atom(&rings, other)
         else {
+            if let Some((node, found)) = &reducing_alditol
+                && let Some(position) = found.position_of(other)
+            {
+                graph.add_linkage(
+                    *node,
+                    nodes[child_index],
+                    Linkage::new(
+                        CarbonPosition(position),
+                        CarbonPosition(ring.anomeric_position()),
+                    ),
+                );
+                has_parent[child_index] = true;
+            }
             continue; // reducing hydroxyl or aglycone
         };
         if parent_index == child_index {
@@ -1098,6 +1137,13 @@ fn de_novo_wurcs_for_molecule(molecule: &Molecule) -> MolResult<ResidueGraph> {
         .enumerate()
         .filter_map(|(index, has_parent)| (!has_parent).then_some(index))
         .collect::<Vec<_>>();
+    if let Some((node, _)) = reducing_alditol {
+        if !roots.is_empty() || graph.edge_count() + 1 != graph.node_count() {
+            return Err(MolError::AmbiguousGlycanFound);
+        }
+        graph.set_root(node);
+        return Ok(graph);
+    }
     if roots.len() != 1 || graph.edge_count() + 1 != graph.node_count() {
         return Err(MolError::AmbiguousGlycanFound);
     }
@@ -1140,6 +1186,11 @@ fn wurcs_for_molecule(molecule: &Molecule) -> MolResult<ResidueGraph> {
         (Some(registry), None) => return parse_wurcs(registry).map_err(MolError::from),
         (None, Some(corpus)) => return parse_wurcs(corpus).map_err(MolError::from),
         (None, None) => {}
+    }
+    // Before an embedded match, which would take the sugars of a reduced
+    // glycan for a complete glycan on an aglycone.
+    if let Some(graph) = alditol_glycan(molecule) {
+        return Ok(graph);
     }
     if let Some(wurcs) = embedded_corpus_wurcs(molecule)? {
         return parse_wurcs(wurcs).map_err(MolError::from);
@@ -1667,6 +1718,177 @@ mod tests {
         let smiles = canonical_smiles(&molecule);
         assert!(smiles.contains('P'), "{smiles}");
         assert!(smiles.contains('N'), "{smiles}");
+    }
+
+    fn canonical(smiles: &str) -> String {
+        canonical_smiles(&parse_smiles(smiles).unwrap())
+    }
+
+    fn written_smiles(wurcs: &str) -> String {
+        let graph = parse_wurcs(wurcs).unwrap();
+        canonical(&molecule_from_wurcs(&graph, ChemFormat::Smiles).unwrap())
+    }
+
+    fn alditol(skeleton: &str) -> String {
+        format!("WURCS=2.0/1,1,0/[{skeleton}]/1/")
+    }
+
+    #[test]
+    fn alditols_are_the_open_chains_pubchem_has() {
+        // The references are PubChem's, not this crate's own output.
+        for (skeleton, formula, smiles) in [
+            (
+                "h2122h",
+                "C6H14O6",
+                "C([C@H]([C@H]([C@@H]([C@H](CO)O)O)O)O)O",
+            ),
+            (
+                "h1122h",
+                "C6H14O6",
+                "C([C@H]([C@H]([C@@H]([C@@H](CO)O)O)O)O)O",
+            ),
+            (
+                "h2112h",
+                "C6H14O6",
+                "C([C@H]([C@@H]([C@@H]([C@H](CO)O)O)O)O)O",
+            ),
+            ("hxh", "C3H8O3", "C(C(CO)O)O"),
+        ] {
+            let graph = parse_wurcs(&alditol(skeleton)).unwrap();
+            let molecule = construct::construct_molecule(&graph).unwrap();
+            assert_eq!(molecule.total_formula(), formula, "{skeleton}");
+            assert!(
+                chematic::perception::find_sssr(&molecule)
+                    .rings()
+                    .is_empty(),
+                "{skeleton} has a ring"
+            );
+            assert_eq!(
+                written_smiles(&alditol(skeleton)),
+                canonical(smiles),
+                "{skeleton}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_alditol_read_from_either_end_is_one_molecule() {
+        // D-glucitol is L-gulitol, and galactitol is meso.
+        assert_eq!(
+            written_smiles(&alditol("h2122h")),
+            written_smiles(&alditol("h1121h"))
+        );
+        assert_eq!(
+            written_smiles(&alditol("h2112h")),
+            written_smiles(&alditol("h1221h"))
+        );
+        // Mannitol is chiral: its D and L forms differ.
+        assert_ne!(
+            written_smiles(&alditol("h1122h")),
+            written_smiles(&alditol("h2211h"))
+        );
+    }
+
+    #[test]
+    fn a_bond_to_an_alditol_uses_its_hydroxyl() {
+        // Lactitol-type disaccharide: the alditol keeps no anomeric carbon.
+        let graph = parse_wurcs("WURCS=2.0/2,2,1/[h2122h][a2122h-1b_1-5]/1-2/a4-b1").unwrap();
+        let molecule = construct::construct_molecule(&graph).unwrap();
+        assert_eq!(molecule.total_formula(), "C12H24O11");
+        assert_eq!(chematic::perception::find_sssr(&molecule).rings().len(), 1);
+
+        // GalNAc-ol keeps its acetamide.
+        let reduced = parse_wurcs(&alditol("h2112h_2*NCC/3=O")).unwrap();
+        let molecule = construct::construct_molecule(&reduced).unwrap();
+        assert_eq!(molecule.total_formula(), "C8H17NO6");
+    }
+
+    fn assert_round_trip(wurcs: &str) {
+        let graph = parse_wurcs(wurcs).unwrap();
+        let expected = write_wurcs(&graph).unwrap();
+        for format in [ChemFormat::Smiles, ChemFormat::Mol, ChemFormat::Sdf] {
+            let written = molecule_from_wurcs(&graph, format).unwrap();
+            let read = wurcs_from_molecule(&written, format)
+                .unwrap_or_else(|error| panic!("{format:?} of {wurcs}: {error}"));
+            assert_eq!(write_wurcs(&read).unwrap(), expected, "{format:?}");
+        }
+    }
+
+    #[test]
+    fn alditols_round_trip_through_every_molecular_format() {
+        for wurcs in [
+            alditol("h2122h"),
+            alditol("h1122h"),
+            alditol("h2112h"),
+            alditol("hxh"),
+            alditol("h1221m"),
+            alditol("h2112h_2*NCC/3=O"),
+            // Reduced disaccharides, and core 1 and core 2 O-glycan alditols.
+            "WURCS=2.0/2,2,1/[h2122h][a2122h-1b_1-5]/1-2/a4-b1".to_owned(),
+            "WURCS=2.0/2,2,1/[h2112h_2*NCC/3=O][a2112h-1b_1-5]/1-2/a3-b1".to_owned(),
+            "WURCS=2.0/3,3,2/[h2112h_2*NCC/3=O][a2112h-1b_1-5][a2122h-1b_1-5_2*NCC/3=O]/1-2-3/a3-b1_a6-c1"
+                .to_owned(),
+        ] {
+            assert_round_trip(&wurcs);
+        }
+    }
+
+    #[test]
+    fn only_a_whole_polyol_reads_as_an_alditol() {
+        for smiles in [
+            "OCCO",                         // two carbons
+            "CC(O)CO",                      // two hydroxyls
+            "OCCCO",                        // a bare methylene
+            "OCC(O)C(=O)O",                 // an acid
+            "C(CO)(CO)(CO)CO",              // branched
+            "CCCCCCCCCCCCCCCC(=O)OCC(O)CO", // a lipid, not an acetate
+            "OC1C(O)C(O)C(O)C(O)C1O",       // a cyclitol
+        ] {
+            assert!(
+                matches!(
+                    wurcs_from_molecule(smiles, ChemFormat::Smiles),
+                    Err(MolError::NoGlycanFound)
+                ),
+                "{smiles}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_aglycones_are_still_dropped_and_glycerol_is_kept() {
+        let glucoside = "O[C@H]1[C@H](O)[C@@H](O)[C@@H](O[C@@H]1CO)";
+        for aglycone in ["CCCO", "CCCCCCCCCCCCCCCC(=O)OCC(O)CO"] {
+            let smiles = format!("{aglycone}[C@@H]1O[C@H](CO)[C@@H](O)[C@H](O)[C@H]1O");
+            let graph = wurcs_from_molecule(&smiles, ChemFormat::Smiles).unwrap();
+            assert_eq!(graph.node_count(), 1, "{aglycone} via {glucoside}");
+        }
+        let glyceroside = "OCC(O)CO[C@@H]1O[C@H](CO)[C@@H](O)[C@H](O)[C@H]1O";
+        let graph = wurcs_from_molecule(glyceroside, ChemFormat::Smiles).unwrap();
+        assert_eq!(graph.node_count(), 2);
+        let root = graph.residue(graph.root().unwrap()).unwrap();
+        assert_eq!(root.skeleton_code, "hxh");
+    }
+
+    #[test]
+    fn open_chain_prefixes_keep_every_carbon_and_their_carbonyl() {
+        for (unique, formula) in [
+            ("hO122h", "C6H12O6"),    // keto-fructose
+            ("AOd21122h", "C9H16O9"), // keto-Kdn
+            ("o2122h", "C6H12O6"),    // aldehydo-glucose
+        ] {
+            let graph = parse_wurcs(&alditol(unique)).unwrap();
+            let molecule = construct::construct_molecule(&graph).unwrap();
+            assert_eq!(molecule.total_formula(), formula, "{unique}");
+            assert!(
+                chematic::perception::find_sssr(&molecule)
+                    .rings()
+                    .is_empty(),
+                "{unique} has a ring"
+            );
+            assert!(canonical_smiles(&molecule).contains("=O"), "{unique}");
+            let mass = mass::glycan_formula(&graph, &mass::MassOptions::default()).unwrap();
+            assert_eq!(mass.to_string(), formula, "{unique}");
+        }
     }
 
     #[test]

@@ -4,8 +4,9 @@
 
 Drawings can be laid out for a figure, uncertainty is drawn the SNFG way, and
 glycans can be weighed, searched and compared. Everything new is opt-in: the
-default rendering of every GlycoShape record, and every conversion, is
-unchanged byte for byte.
+default rendering of every GlycoShape record, and every conversion of one, is
+unchanged byte for byte. The molecular fixes under "Output changes" affect
+structures outside that corpus.
 
 - **Orientation and compact drawings.** `RenderOptions` gains `orientation`
   (`RootRight`, the SNFG convention and the default, `RootLeft`, `RootBottom`,
@@ -64,6 +65,24 @@ unchanged byte for byte.
 
 - The Python command line writes SVG as UTF-8. `crabwurcs render --output` failed
   on Windows for any glycan with a Greek linkage label.
+
+### Output changes
+
+- **Alditols are open chains.** A backbone with no anomeric prefix (`h2122h`,
+  `hxh`) was built with a phantom carbon and a ring: sorbitol came out as a
+  seven-carbon ring and glycerol as a furanose. They now write as the polyols
+  they are, and SMILES, MOL and SDF read back to the same WURCS.
+- **Alditols are read from molecules.** A free polyol, or an alditol at the
+  reducing end of a glycan such as `Gal(b1-3)GalNAc-ol`, is now a residue. Before,
+  a free polyol was `NoGlycanFound` and a reducing-end alditol was silently dropped
+  as an aglycone. A chain counts only if the glycan read accounts for the whole
+  formula, so a glycerol lipid keeps the old reading. Both ends of a polyol are
+  one molecule, so it is numbered like the sugar it comes from: an amide on the
+  lowest carbon, then a D highest stereocentre. A truly symmetric polyol takes the
+  lowest position, so `a6-b1` on mannitol reads back as the equivalent `a1-b1`.
+- **Open-chain carbonyls keep their carbons.** `hO` and `AOd` backbones lost two
+  carbons between them, which `hO122h` wrote as a five-carbon ring. They now write
+  in full, and `o` and `O` write as the carbonyl they mean instead of a closed ring.
 
 ### API notes for Rust callers
 
