@@ -1891,6 +1891,93 @@ mod tests {
         }
     }
 
+    fn assert_carbons_are_tetravalent(molecule: &Molecule, context: &str) {
+        for (index, atom) in molecule.atoms() {
+            if atom.element == Element::C {
+                let bonds = chematic::core::bond_order_sum(molecule, index)
+                    + molecule.implicit_hydrogen_count(index);
+                assert!(bonds <= 4, "{context}: carbon {} has {bonds}", index.0);
+            }
+        }
+    }
+
+    #[test]
+    fn a_bonded_anomeric_carbon_has_no_hydroxyl_left() {
+        // The references are PubChem's, not this crate's own output.
+        for (name, wurcs, formula, smiles) in [
+            (
+                "trehalose, bonded through both anomeric carbons",
+                "WURCS=2.0/1,2,1/[a2122h-1a_1-5]/1-1/a1-b1",
+                "C12H22O11",
+                "C([C@@H]1[C@H]([C@@H]([C@H]([C@H](O1)O[C@@H]2[C@@H]([C@H]([C@@H]([C@H](O2)CO)O)O)O)O)O)O)O",
+            ),
+            (
+                "sucrose, an aldose bonded to a ketose",
+                "WURCS=2.0/2,2,1/[a2122h-1a_1-5][ha122h-2b_2-5]/1-2/a1-b2",
+                "C12H22O11",
+                "C([C@@H]1[C@H]([C@@H]([C@H]([C@H](O1)O[C@]2([C@H]([C@@H]([C@H](O2)CO)O)O)CO)O)O)O)O",
+            ),
+            (
+                "methyl glucoside, a substituent on the anomeric carbon",
+                "WURCS=2.0/1,1,0/[a2122h-1b_1-5_1*OC]/1/",
+                "C7H14O6",
+                "CO[C@H]1[C@@H]([C@H]([C@@H]([C@H](O1)CO)O)O)O",
+            ),
+        ] {
+            let graph = parse_wurcs(wurcs).unwrap();
+            let molecule = construct::construct_molecule(&graph).unwrap();
+            assert_carbons_are_tetravalent(&molecule, name);
+            assert_eq!(molecule.total_formula(), formula, "{name}");
+            let mass = mass::glycan_formula(&graph, &mass::MassOptions::default()).unwrap();
+            assert_eq!(mass.to_string(), formula, "{name}");
+            assert_eq!(written_smiles(wurcs), canonical(smiles), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_bridge_on_an_anomeric_carbon_replaces_its_hydroxyl() {
+        let wurcs = "WURCS=2.0/2,2,1/[hxh][a2122h-1b_1-5]/1-2/a3n2-b1n1*1NCCOP^XO*2/6O/6=O";
+        let graph = parse_wurcs(wurcs).unwrap();
+        let molecule = construct::construct_molecule(&graph).unwrap();
+        assert_carbons_are_tetravalent(&molecule, "bridged glucoside");
+        assert_eq!(
+            molecule.total_formula(),
+            mass::glycan_formula(&graph, &mass::MassOptions::default())
+                .unwrap()
+                .to_string()
+        );
+    }
+
+    #[test]
+    fn the_anomer_survives_a_bond_at_the_anomeric_carbon() {
+        // α and β differ only at the bonded carbon, so its stereo has to read
+        // the atom that is really there.
+        let glucoside =
+            |anomer| written_smiles(&format!("WURCS=2.0/1,1,0/[a2122h-1{anomer}_1-5_1*OC]/1/"));
+        assert_ne!(glucoside('a'), glucoside('b'));
+
+        let bridged = |anomer| {
+            written_smiles(&format!(
+                "WURCS=2.0/2,2,1/[hxh][a2122h-1{anomer}_1-5]/1-2/a3n2-b1n1*1NCCOP^XO*2/6O/6=O"
+            ))
+        };
+        assert_ne!(bridged('a'), bridged('b'));
+    }
+
+    #[test]
+    fn every_constructed_corpus_carbon_is_tetravalent() {
+        let mut built = 0usize;
+        for line in SOURCE_CORPUS.lines().chain(DERIVED_CORPUS.lines()) {
+            let wurcs = line.split('\t').next().unwrap();
+            let graph = parse_wurcs(wurcs).unwrap();
+            if let Ok(molecule) = construct::construct_molecule(&graph) {
+                assert_carbons_are_tetravalent(&molecule, wurcs);
+                built += 1;
+            }
+        }
+        assert!(built > 800, "only {built} records were constructed");
+    }
+
     #[test]
     fn open_chain_backbones_emit_a_carbonyl_without_a_ring_bond() {
         let mut graph = parse_wurcs("WURCS=2.0/1,1,0/[a2122h-1a_1-5]/1/").unwrap();

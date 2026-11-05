@@ -13,9 +13,9 @@ use crate::{MolError, MolResult, NonConcreteFeature};
 struct BuiltResidue {
     carbons: Vec<AtomIdx>,
     descriptors: Vec<char>,
+    /// The atom each carbon carries in place of a hydrogen: its hydroxyl, or
+    /// whatever is bonded there instead.
     primary_modification: Vec<Option<AtomIdx>>,
-    /// `None` for an alditol, which has no anomeric carbon.
-    anomeric_oxygen: Option<AtomIdx>,
     ring_oxygen: Option<AtomIdx>,
     /// 0 for an alditol.
     anomeric_position: usize,
@@ -411,33 +411,6 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
             Some(oxygen)
         };
 
-        let anomeric_oxygen = if alditol {
-            None
-        } else {
-            let oxygen = add_oxygen_with_order(
-                &mut builder,
-                carbons[anomeric_position - 1],
-                if open_chain {
-                    BondOrder::Double
-                } else {
-                    BondOrder::Single
-                },
-            )?;
-            primary_modification[anomeric_position - 1] = Some(oxygen);
-            Some(oxygen)
-        };
-        if let Some(ring_oxygen) = ring_oxygen {
-            primary_modification[ring_end - 1] = Some(ring_oxygen);
-        }
-        let mut consumed_modifications = vec![0usize; carbon_count];
-        if !open_chain {
-            consumed_modifications[ring_start - 1] += 1;
-            consumed_modifications[ring_end - 1] += 1;
-        }
-        if !alditol {
-            consumed_modifications[anomeric_position - 1] += 1;
-        }
-
         let modifications = residue
             .modifications
             .iter()
@@ -450,6 +423,35 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
                 Ok((modification.position.0 as usize, &modification.descriptor))
             })
             .collect::<MolResult<HashMap<_, _>>>()?;
+        // Whatever is bonded at a closed anomeric carbon, a sugar, a bridge or a
+        // substituent, takes the place of its hydroxyl.
+        let anomeric_bonded = !open_chain
+            && (occupied_positions.contains(&(node.index(), anomeric_position))
+                || modifications.contains_key(&anomeric_position));
+        if !alditol && !anomeric_bonded {
+            let oxygen = add_oxygen_with_order(
+                &mut builder,
+                carbons[anomeric_position - 1],
+                if open_chain {
+                    BondOrder::Double
+                } else {
+                    BondOrder::Single
+                },
+            )?;
+            primary_modification[anomeric_position - 1] = Some(oxygen);
+        }
+        if let Some(ring_oxygen) = ring_oxygen {
+            primary_modification[ring_end - 1] = Some(ring_oxygen);
+        }
+        let mut consumed_modifications = vec![0usize; carbon_count];
+        if !open_chain {
+            consumed_modifications[ring_start - 1] += 1;
+            consumed_modifications[ring_end - 1] += 1;
+        }
+        if !alditol {
+            consumed_modifications[anomeric_position - 1] += 1;
+        }
+
         for (offset, descriptor) in descriptors.iter().copied().enumerate() {
             let position = offset + 1;
             if let Some(map) = modifications.get(&position) {
@@ -476,7 +478,6 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
                 carbons,
                 descriptors,
                 primary_modification,
-                anomeric_oxygen,
                 ring_oxygen,
                 anomeric_position,
             },
@@ -542,6 +543,18 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
                 })?;
             add_bond(&mut builder, parent_carbon, parent_atom, parent_order)?;
             add_bond(&mut builder, child_carbon, child_atom, child_order)?;
+            // The stereo of a bridged anomeric carbon is read through the bridge.
+            for (node, position, atom) in [
+                (edge.source(), linkage.parent_position.0, parent_atom),
+                (edge.target(), linkage.child_position.0, child_atom),
+            ] {
+                let position = usize::from(position);
+                if let Some(residue) = built.get_mut(&node.index())
+                    && residue.anomeric_position == position
+                {
+                    residue.primary_modification[position - 1] = Some(atom);
+                }
+            }
             continue;
         }
         let child_position = linkage.child_position.0 as usize;
@@ -597,14 +610,16 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
                 ],
             );
         }
-        let Some(anomeric_oxygen) = residue.anomeric_oxygen else {
+        let Some(anomer) = residue.anomeric_position.checked_sub(1) else {
             continue;
         };
-        let anomer = residue.anomeric_position - 1;
         if builder.atom_at(residue.carbons[anomer]).chirality == Chirality::None {
             continue;
         }
         let Some(ring_oxygen) = residue.ring_oxygen else {
+            continue;
+        };
+        let Some(anomeric_atom) = residue.primary_modification[anomer] else {
             continue;
         };
         let previous = if anomer == 0 {
@@ -616,7 +631,7 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
             residue.carbons[anomer],
             vec![
                 previous,
-                anomeric_oxygen.0,
+                anomeric_atom.0,
                 residue.carbons[anomer + 1].0,
                 ring_oxygen.0,
             ],

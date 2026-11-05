@@ -83,6 +83,12 @@ structures outside that corpus.
 - **Open-chain carbonyls keep their carbons.** `hO` and `AOd` backbones lost two
   carbons between them, which `hO122h` wrote as a five-carbon ring. They now write
   in full, and `o` and `O` write as the carbonyl they mean instead of a closed ring.
+- **A bonded anomeric carbon has no hydroxyl.** An anomeric carbon kept its hydroxyl
+  whatever else was bonded there, which gave it five bonds: trehalose and sucrose
+  (bonded through it), a MAP bridge on it, and a substituent such as the `1*OC` of a
+  methyl glycoside. Whatever is bonded there now replaces the hydroxyl, and the
+  anomer is read through that atom. Trehalose, sucrose and methyl glucoside match
+  their PubChem structures.
 
 ### API notes for Rust callers
 
