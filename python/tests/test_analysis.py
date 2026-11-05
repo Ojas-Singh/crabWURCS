@@ -207,6 +207,26 @@ def test_glycans_compare_as_structures():
     assert len({glycan(LACNAC), crabwurcs.Glycan.parse("DGalpb1-4DGlcpNAc", "glycam")}) == 1
 
 
+def test_a_non_reducing_sugar_compares_from_either_residue():
+    glucose_first = crabwurcs.Glycan.parse(
+        "WURCS=2.0/2,2,1/[a2122h-1a_1-5][ha122h-2b_2-5]/1-2/a1-b2", "wurcs"
+    )
+    fructose_first = crabwurcs.Glycan.parse(
+        "WURCS=2.0/2,2,1/[ha122h-2b_2-5][a2122h-1a_1-5]/1-2/a2-b1", "wurcs"
+    )
+    assert glucose_first == fructose_first
+    assert hash(glucose_first) == hash(fructose_first)
+    assert len({glucose_first, fructose_first}) == 1
+    assert glucose_first == crabwurcs.Glycan.parse(fructose_first.to("smiles"), "smiles")
+    # Each still writes the way it was given.
+    assert glucose_first.to("wurcs") != fructose_first.to("wurcs")
+    # And the isomer with the other fructose anomer is another structure.
+    other = crabwurcs.Glycan.parse(
+        "WURCS=2.0/2,2,1/[a2122h-1a_1-5][ha122h-2a_2-5]/1-2/a1-b2", "wurcs"
+    )
+    assert glucose_first != other
+
+
 def test_a_glycan_no_notation_represents_equals_only_itself():
     assert glycan("Foo") == glycan("Foo")  # its IUPAC still identifies it
     assert hash(glycan("Foo")) == hash(glycan("Foo"))

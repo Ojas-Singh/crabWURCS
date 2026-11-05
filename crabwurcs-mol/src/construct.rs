@@ -13,19 +13,39 @@ use crate::{MolError, MolResult, NonConcreteFeature};
 struct BuiltResidue {
     carbons: Vec<AtomIdx>,
     descriptors: Vec<char>,
+    /// The atom each carbon carries in place of a hydrogen: its hydroxyl, or
+    /// whatever is bonded there instead.
     primary_modification: Vec<Option<AtomIdx>>,
-    anomeric_oxygen: AtomIdx,
     ring_oxygen: Option<AtomIdx>,
+    /// 0 for an alditol.
     anomeric_position: usize,
+}
+
+/// Whether a backbone has no anomeric carbon: WURCS writes an alditol with no
+/// anomeric prefix and its full chain in the skeleton (`h2122h`, `hxh`).
+pub(crate) fn is_alditol(residue: &Monosaccharide) -> bool {
+    residue.anomeric_prefix.is_empty() && residue.skeleton_code.starts_with(['h', 'm'])
 }
 
 pub(crate) fn carbon_descriptors(residue: &Monosaccharide) -> MolResult<Vec<char>> {
     let mut descriptors = Vec::new();
     let prefix = residue.anomeric_prefix.as_str();
-    if prefix.starts_with("Aa") || prefix.starts_with("AU") {
+    if is_alditol(residue) {
+        descriptors.extend(residue.skeleton_code.chars());
+        if descriptors.len() < 3 {
+            return Err(MolError::UnsupportedChemistry(format!(
+                "backbone `{}` is too short",
+                residue.skeleton_code
+            )));
+        }
+        return Ok(descriptors);
+    }
+    if prefix.starts_with("Aa") || prefix.starts_with("AU") || prefix.starts_with("AO") {
         descriptors.extend(['A', prefix.chars().nth(1).unwrap_or('U'), 'd']);
-    } else if prefix.starts_with("ha") || prefix.starts_with("hU") {
+    } else if prefix.starts_with("ha") || prefix.starts_with("hU") || prefix.starts_with("hO") {
         descriptors.extend(['h', prefix.chars().nth(1).unwrap_or('U')]);
+    } else if prefix == "Ad" {
+        descriptors.extend(['A', 'd']);
     } else {
         descriptors.push(prefix.chars().next().unwrap_or('u'));
     }
@@ -71,7 +91,7 @@ fn backbone_bond_order(left: char, right: char) -> BondOrder {
     }
 }
 
-pub(crate) fn default_oxygen_bonds(descriptor: char, terminal: bool) -> MolResult<Vec<BondOrder>> {
+fn default_oxygen_bonds(descriptor: char, terminal: bool) -> MolResult<Vec<BondOrder>> {
     use BondOrder::{Double, Single, Triple};
     let bonds = match descriptor {
         'm' | 'd' | 'n' | 't' => vec![],
@@ -150,7 +170,9 @@ fn inferred_ring_positions(residue: &Monosaccharide, carbon_count: usize) -> (us
 pub(crate) fn effective_anomeric_position(residue: &Monosaccharide) -> usize {
     if residue.anomeric_position > 0 {
         usize::from(residue.anomeric_position)
-    } else if residue.anomeric_prefix.starts_with("AU") || residue.anomeric_prefix.starts_with("hU")
+    } else if ["AU", "AO", "hU", "hO"]
+        .iter()
+        .any(|prefix| residue.anomeric_prefix.starts_with(prefix))
     {
         2
     } else {
@@ -284,7 +306,12 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
         let residue = graph.residue(node).expect("node has residue");
         let descriptors = carbon_descriptors(residue)?;
         let carbon_count = descriptors.len();
-        let anomeric_position = effective_anomeric_position(residue);
+        let alditol = is_alditol(residue);
+        let anomeric_position = if alditol {
+            0
+        } else {
+            effective_anomeric_position(residue)
+        };
         let reference = descriptors
             .iter()
             .copied()
@@ -341,9 +368,15 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
         }
 
         let mut primary_modification = vec![None; carbon_count];
-        let open_chain = residue.ring == RingClosure::Open;
+        // `o` and `O` are the carbonyl itself: a chain that never closed.
+        let open_chain = alditol
+            || residue.ring == RingClosure::Open
+            || matches!(
+                descriptors.get(anomeric_position.wrapping_sub(1)),
+                Some('o' | 'O')
+            );
         let (ring_start, ring_end) = inferred_ring_positions(residue, carbon_count);
-        if anomeric_position == 0 || anomeric_position > carbon_count {
+        if !alditol && (anomeric_position == 0 || anomeric_position > carbon_count) {
             return Err(MolError::InvalidSkeleton {
                 offset: 0,
                 message: format!(
@@ -378,26 +411,6 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
             Some(oxygen)
         };
 
-        let anomeric_oxygen = add_oxygen_with_order(
-            &mut builder,
-            carbons[anomeric_position - 1],
-            if open_chain {
-                BondOrder::Double
-            } else {
-                BondOrder::Single
-            },
-        )?;
-        primary_modification[anomeric_position - 1] = Some(anomeric_oxygen);
-        if let Some(ring_oxygen) = ring_oxygen {
-            primary_modification[ring_end - 1] = Some(ring_oxygen);
-        }
-        let mut consumed_modifications = vec![0usize; carbon_count];
-        if !open_chain {
-            consumed_modifications[ring_start - 1] += 1;
-            consumed_modifications[ring_end - 1] += 1;
-        }
-        consumed_modifications[anomeric_position - 1] += 1;
-
         let modifications = residue
             .modifications
             .iter()
@@ -410,6 +423,35 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
                 Ok((modification.position.0 as usize, &modification.descriptor))
             })
             .collect::<MolResult<HashMap<_, _>>>()?;
+        // Whatever is bonded at a closed anomeric carbon, a sugar, a bridge or a
+        // substituent, takes the place of its hydroxyl.
+        let anomeric_bonded = !open_chain
+            && (occupied_positions.contains(&(node.index(), anomeric_position))
+                || modifications.contains_key(&anomeric_position));
+        if !alditol && !anomeric_bonded {
+            let oxygen = add_oxygen_with_order(
+                &mut builder,
+                carbons[anomeric_position - 1],
+                if open_chain {
+                    BondOrder::Double
+                } else {
+                    BondOrder::Single
+                },
+            )?;
+            primary_modification[anomeric_position - 1] = Some(oxygen);
+        }
+        if let Some(ring_oxygen) = ring_oxygen {
+            primary_modification[ring_end - 1] = Some(ring_oxygen);
+        }
+        let mut consumed_modifications = vec![0usize; carbon_count];
+        if !open_chain {
+            consumed_modifications[ring_start - 1] += 1;
+            consumed_modifications[ring_end - 1] += 1;
+        }
+        if !alditol {
+            consumed_modifications[anomeric_position - 1] += 1;
+        }
+
         for (offset, descriptor) in descriptors.iter().copied().enumerate() {
             let position = offset + 1;
             if let Some(map) = modifications.get(&position) {
@@ -436,7 +478,6 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
                 carbons,
                 descriptors,
                 primary_modification,
-                anomeric_oxygen,
                 ring_oxygen,
                 anomeric_position,
             },
@@ -502,6 +543,18 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
                 })?;
             add_bond(&mut builder, parent_carbon, parent_atom, parent_order)?;
             add_bond(&mut builder, child_carbon, child_atom, child_order)?;
+            // The stereo of a bridged anomeric carbon is read through the bridge.
+            for (node, position, atom) in [
+                (edge.source(), linkage.parent_position.0, parent_atom),
+                (edge.target(), linkage.child_position.0, child_atom),
+            ] {
+                let position = usize::from(position);
+                if let Some(residue) = built.get_mut(&node.index())
+                    && residue.anomeric_position == position
+                {
+                    residue.primary_modification[position - 1] = Some(atom);
+                }
+            }
             continue;
         }
         let child_position = linkage.child_position.0 as usize;
@@ -557,11 +610,16 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
                 ],
             );
         }
-        let anomer = residue.anomeric_position - 1;
+        let Some(anomer) = residue.anomeric_position.checked_sub(1) else {
+            continue;
+        };
         if builder.atom_at(residue.carbons[anomer]).chirality == Chirality::None {
             continue;
         }
         let Some(ring_oxygen) = residue.ring_oxygen else {
+            continue;
+        };
+        let Some(anomeric_atom) = residue.primary_modification[anomer] else {
             continue;
         };
         let previous = if anomer == 0 {
@@ -573,7 +631,7 @@ pub(crate) fn construct_molecule(graph: &ResidueGraph) -> MolResult<Molecule> {
             residue.carbons[anomer],
             vec![
                 previous,
-                residue.anomeric_oxygen.0,
+                anomeric_atom.0,
                 residue.carbons[anomer + 1].0,
                 ring_oxygen.0,
             ],

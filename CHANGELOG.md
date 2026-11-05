@@ -4,8 +4,9 @@
 
 Drawings can be laid out for a figure, uncertainty is drawn the SNFG way, and
 glycans can be weighed, searched and compared. Everything new is opt-in: the
-default rendering of every GlycoShape record, and every conversion, is
-unchanged byte for byte.
+default rendering of every GlycoShape record, and every conversion of one, is
+unchanged byte for byte. The molecular fixes under "Output changes" affect
+structures outside that corpus.
 
 - **Orientation and compact drawings.** `RenderOptions` gains `orientation`
   (`RootRight`, the SNFG convention and the default, `RootLeft`, `RootBottom`,
@@ -44,7 +45,8 @@ unchanged byte for byte.
   `RenderOptions::cleavages` mark them on the drawing.
 - **Structure comparison.** `structure_key` and `same_structure` compare
   glycans whatever notation or residue numbering they came from. A stated
-  anomer or position is more than an open one.
+  anomer or position is more than an open one. A non-reducing sugar such as
+  sucrose is one structure from either residue, though it writes as it was given.
 - **Grids and figures.** `render_grid_svg` and `render_grid_png` draw many
   glycans on one canvas, and `svg_to_png` is public. Python's new
   `crabwurcs.figures` has `render_grid`, `write_images`, and `annotate_svg` and
@@ -64,6 +66,42 @@ unchanged byte for byte.
 
 - The Python command line writes SVG as UTF-8. `crabwurcs render --output` failed
   on Windows for any glycan with a Greek linkage label.
+
+### Output changes
+
+- **Alditols are open chains.** A backbone with no anomeric prefix (`h2122h`,
+  `hxh`) was built with a phantom carbon and a ring: sorbitol came out as a
+  seven-carbon ring and glycerol as a furanose. They now write as the polyols
+  they are, and SMILES, MOL and SDF read back to the same WURCS.
+- **Alditols are read from molecules.** A free polyol, or an alditol at the
+  reducing end of a glycan such as `Gal(b1-3)GalNAc-ol`, is now a residue. Before,
+  a free polyol was `NoGlycanFound` and a reducing-end alditol was silently dropped
+  as an aglycone. A chain counts only if the glycan read accounts for the whole
+  formula, so a glycerol lipid keeps the old reading. Both ends of a polyol are
+  one molecule, so it is numbered like the sugar it comes from: an amide on the
+  lowest carbon, then a D highest stereocentre. A truly symmetric polyol takes the
+  lowest position, so `a6-b1` on mannitol reads back as the equivalent `a1-b1`.
+- **Open-chain carbonyls keep their carbons.** `hO` and `AOd` backbones lost two
+  carbons between them, which `hO122h` wrote as a five-carbon ring. They now write
+  in full, and `o` and `O` write as the carbonyl they mean instead of a closed ring.
+- **A bonded anomeric carbon has no hydroxyl.** An anomeric carbon kept its hydroxyl
+  whatever else was bonded there, which gave it five bonds: trehalose and sucrose
+  (bonded through it), a MAP bridge on it, and a substituent such as the `1*OC` of a
+  methyl glycoside. Whatever is bonded there now replaces the hydroxyl, and the
+  anomer is read through that atom. Trehalose, sucrose and methyl glucoside match
+  their PubChem structures.
+- **The sugar on an anomeric nitrogen is read.** A ring whose anomeric carbon
+  carries nitrogen was skipped without an error, so an N-glycan on an asparagine
+  lost its root GlcNAc: LacNAc on asparagine read as Gal. It is now a residue, its
+  anomer read through the nitrogen, and the asparagine is an aglycone like any
+  other. A bare amine stays a `1*N` substituent. The nitrogen of an aromatic or
+  cyclic base does not count, so nucleosides and nucleotide sugars read as before.
+  Bridges are still not read from molecules: what is past an anomeric nitrogen is
+  an aglycone, so a MAP bridge there reads as the sugar alone.
+- **Trehalose and sucrose are read.** Two anomeric carbons sharing one oxygen were
+  counted as two bonds, which failed. They are one bond now, from the residue WURCS
+  writes first, however the molecule is written. `MolError::AmbiguousGlycanFound`
+  no longer says corpus glycans matched, which was only ever one of its causes.
 
 ### API notes for Rust callers
 

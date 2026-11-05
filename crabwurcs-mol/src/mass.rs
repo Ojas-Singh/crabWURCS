@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::str::FromStr;
 
-use chematic::core::{Atom, BondOrder, Element, Molecule, MoleculeBuilder, bond_order_sum};
+use chematic::core::{Atom, Element, Molecule, MoleculeBuilder, bond_order_sum};
 use crabwurcs_core::{
     Linkage, Monosaccharide, RepeatCount, ResidueGraph, ResidueKind,
     classify_residue_configuration, residue_from_kind,
@@ -453,36 +453,6 @@ fn bond_tally(linkage: &Linkage) -> MassResult<Tally> {
     }
 }
 
-/// A backbone without an anomeric carbon (an alditol, glycerol), counted
-/// carbon by carbon: the molecular constructor only builds sugars.
-fn alditol_tally(residue: &Monosaccharide) -> MassResult<Tally> {
-    let descriptors = residue.skeleton_code.chars().collect::<Vec<_>>();
-    let mut tally = Tally::default();
-    for (offset, descriptor) in descriptors.iter().copied().enumerate() {
-        let terminal = offset == 0 || offset + 1 == descriptors.len();
-        let oxygens = construct::default_oxygen_bonds(descriptor, terminal)?;
-        let hydroxyls = oxygens
-            .iter()
-            .filter(|order| **order == BondOrder::Single)
-            .count() as i64;
-        let oxygen_bonds = oxygens
-            .iter()
-            .map(|order| i64::from(order.order_int()))
-            .sum::<i64>();
-        let backbone_bonds = if terminal { 1 } else { 2 };
-        tally.formula.add_element("C", 1);
-        tally.formula.add_element("O", oxygens.len() as i64);
-        tally
-            .formula
-            .add_element("H", 4 - backbone_bonds - oxygen_bonds + hydroxyls);
-        tally.methyl_sites += hydroxyls;
-    }
-    for modification in &residue.modifications {
-        tally.add(&substituent_tally(&modification.descriptor)?, 1);
-    }
-    Ok(tally)
-}
-
 fn residue_tally(residue: &Monosaccharide) -> MassResult<Tally> {
     if let Some(name) = &residue.display_name {
         return Err(MassError::UndefinedResidue(name.clone()));
@@ -500,9 +470,6 @@ fn residue_tally(residue: &Monosaccharide) -> MassResult<Tally> {
         .any(|m| m.probability.is_some())
     {
         return Err(MassError::Ensemble);
-    }
-    if residue.anomeric_prefix.is_empty() {
-        return alditol_tally(residue);
     }
     // A substituent at an unknown position has a mass all the same; only the
     // molecular constructor needs to know where it goes.
@@ -596,9 +563,6 @@ fn has_free_reducing_end(graph: &ResidueGraph) -> MassResult<bool> {
         return Ok(false);
     }
     let residue = &graph.inner()[root];
-    if residue.anomeric_prefix.is_empty() {
-        return Ok(false);
-    }
     let descriptors = construct::carbon_descriptors(residue)?;
     if !descriptors
         .iter()
