@@ -20,7 +20,9 @@
 - `Glycan.residues()` lists residues with their node index, name and parent.
 - `==` and `hash()` compare structures, whatever notation they were read from.
   A stated anomer or position is more than an open one: `GlcNAc` is not
-  `GlcNAc(b1-`.
+  `GlcNAc(b1-`. A non-reducing sugar such as sucrose is one structure from
+  either residue, so two WURCS that differ only in that direction compare equal
+  while each still writes as it was given.
 
 ## Convenience functions
 
