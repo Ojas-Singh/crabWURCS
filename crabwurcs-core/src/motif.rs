@@ -6,6 +6,7 @@ use petgraph::Direction;
 use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::EdgeRef;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::str::FromStr;
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +31,134 @@ pub enum MotifError {
     UndefinedLinkage,
     #[error("motif contains an undefined modification")]
     UndefinedModification,
+    #[error("motif has {expected} residues but {found} positions were given")]
+    PositionCount { expected: usize, found: usize },
+}
+
+/// Where a motif residue has to sit in the glycan it matches, as GlycoDraw's
+/// `highlight_termini_list` (`terminal`, `internal`, `flexible`), plus the
+/// reducing end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum MotifPosition {
+    /// Anywhere.
+    #[default]
+    Flexible,
+    /// Nothing is bonded to it on the non-reducing side. A candidate parent
+    /// of an undefined fragment may carry one, so it is not terminal.
+    Terminal,
+    /// At least one residue is bonded to it on the non-reducing side.
+    Internal,
+    /// The reducing-end residue of the glycan.
+    Reducing,
+}
+
+impl MotifPosition {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Flexible => "flexible",
+            Self::Terminal => "terminal",
+            Self::Internal => "internal",
+            Self::Reducing => "reducing",
+        }
+    }
+
+    fn holds(self, target: &ResidueGraph, node: NodeIndex) -> bool {
+        match self {
+            Self::Flexible => true,
+            Self::Reducing => target.root() == Some(node),
+            Self::Terminal | Self::Internal => {
+                let has_child = target
+                    .inner()
+                    .edges_directed(node, Direction::Outgoing)
+                    .any(|edge| edge.weight().repeat.is_none() && !edge.weight().cyclic);
+                if self == Self::Internal {
+                    return has_child;
+                }
+                !has_child
+                    && !target.undefined_linkages().iter().any(|undefined| {
+                        undefined
+                            .parents
+                            .iter()
+                            .any(|parent| parent.residue == node)
+                    })
+            }
+        }
+    }
+}
+
+impl FromStr for MotifPosition {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "flexible" | "any" => Ok(Self::Flexible),
+            "terminal" => Ok(Self::Terminal),
+            "internal" => Ok(Self::Internal),
+            "reducing" | "root" => Ok(Self::Reducing),
+            other => Err(format!(
+                "unknown motif position: {other} (expected flexible, terminal, internal or reducing)"
+            )),
+        }
+    }
+}
+
+/// A motif together with the positions its residues must take.
+#[derive(Debug, Clone)]
+pub struct MotifQuery {
+    motif: ResidueGraph,
+    /// By motif node index; empty when every residue is flexible.
+    positions: Vec<MotifPosition>,
+}
+
+impl MotifQuery {
+    /// A motif whose residues may sit anywhere.
+    pub fn new(motif: ResidueGraph) -> Self {
+        Self {
+            motif,
+            positions: Vec::new(),
+        }
+    }
+
+    /// A motif with one position per residue, listed in the order the
+    /// residues are read in its IUPAC or GLYCAM text, from the non-reducing
+    /// end (the order of GlycoDraw's `highlight_termini_list`): for
+    /// `Gal(b1-4)GlcNAc`, `[Terminal, Flexible]` asks for a terminal Gal.
+    pub fn with_positions(
+        motif: ResidueGraph,
+        positions: &[MotifPosition],
+    ) -> Result<Self, MotifError> {
+        if positions.len() != motif.node_count() {
+            return Err(MotifError::PositionCount {
+                expected: motif.node_count(),
+                found: positions.len(),
+            });
+        }
+        Ok(Self {
+            motif,
+            // Notation readers number residues from the reducing end.
+            positions: positions.iter().rev().copied().collect(),
+        })
+    }
+
+    pub fn motif(&self) -> &ResidueGraph {
+        &self.motif
+    }
+
+    /// Every occurrence in `target`; see [`find_motif_matches`].
+    pub fn find(&self, target: &ResidueGraph) -> Result<Vec<MotifMatch>, MotifError> {
+        find_matches(target, &self.motif, &self.positions)
+    }
+
+    /// Whether `target` holds the motif at least once.
+    pub fn contained_in(&self, target: &ResidueGraph) -> Result<bool, MotifError> {
+        Ok(!self.find(target)?.is_empty())
+    }
+
+    /// The number of occurrences in `target`. Occurrences that use the same
+    /// residues and bonds count once.
+    pub fn count_in(&self, target: &ResidueGraph) -> Result<usize, MotifError> {
+        Ok(self.find(target)?.len())
+    }
 }
 
 /// Find every injective, directed, non-induced occurrence of `motif` in
@@ -43,6 +172,14 @@ pub fn find_motif_matches(
     target: &ResidueGraph,
     motif: &ResidueGraph,
 ) -> Result<Vec<MotifMatch>, MotifError> {
+    find_matches(target, motif, &[])
+}
+
+fn find_matches(
+    target: &ResidueGraph,
+    motif: &ResidueGraph,
+    positions: &[MotifPosition],
+) -> Result<Vec<MotifMatch>, MotifError> {
     validate_motif(motif)?;
 
     let motif_graph = motif.inner();
@@ -54,9 +191,16 @@ pub fn find_motif_matches(
     let mut candidates = HashMap::<NodeIndex, Vec<NodeIndex>>::new();
     for motif_node in motif_graph.node_indices() {
         let motif_residue = &motif_graph[motif_node];
+        let position = positions
+            .get(motif_node.index())
+            .copied()
+            .unwrap_or_default();
         let compatible = target_graph
             .node_indices()
-            .filter(|target_node| residue_matches(motif_residue, &target_graph[*target_node]))
+            .filter(|target_node| {
+                residue_matches(motif_residue, &target_graph[*target_node])
+                    && position.holds(target, *target_node)
+            })
             .collect::<Vec<_>>();
         if compatible.is_empty() {
             return Ok(Vec::new());
@@ -369,7 +513,7 @@ fn position_matches(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{RepeatCount, UndefinedLinkage, residue_from_kind};
+    use crate::{RepeatCount, UndefinedLinkage, UndefinedParent, residue_from_kind};
 
     fn one_residue(kind: ResidueKind) -> ResidueGraph {
         let mut graph = ResidueGraph::new();
@@ -444,6 +588,107 @@ mod tests {
             .unwrap()
             .skeleton_code = "a1211h".into();
         assert!(find_motif_matches(&target, &inverted).unwrap().is_empty());
+    }
+
+    /// `Gal(b1-4)GlcNAc`, with a sialic acid on the Gal when `capped`.
+    fn lacnac(capped: bool) -> ResidueGraph {
+        let mut graph = ResidueGraph::new();
+        let glcnac = graph.add_residue(residue_from_kind(ResidueKind::GlcNAc).unwrap());
+        let gal = graph.add_residue(residue_from_kind(ResidueKind::Gal).unwrap());
+        graph.add_linkage(
+            glcnac,
+            gal,
+            Linkage::new(CarbonPosition(4), CarbonPosition(1)),
+        );
+        if capped {
+            let neu5ac = graph.add_residue(residue_from_kind(ResidueKind::Neu5Ac).unwrap());
+            graph.add_linkage(
+                gal,
+                neu5ac,
+                Linkage::new(CarbonPosition(3), CarbonPosition(2)),
+            );
+        }
+        graph
+    }
+
+    fn lacnac_at(positions: &[MotifPosition]) -> MotifQuery {
+        MotifQuery::with_positions(lacnac(false), positions).unwrap()
+    }
+
+    #[test]
+    fn motif_positions_are_read_from_the_non_reducing_end() {
+        use MotifPosition::*;
+        let free = lacnac(false);
+        let capped = lacnac(true);
+
+        for (positions, on_free, on_capped) in [
+            ([Flexible, Flexible], 1, 1),
+            ([Terminal, Flexible], 1, 0),
+            ([Internal, Flexible], 0, 1),
+            ([Flexible, Reducing], 1, 1),
+            ([Reducing, Flexible], 0, 0),
+            ([Flexible, Terminal], 0, 0),
+        ] {
+            let query = lacnac_at(&positions);
+            assert_eq!(query.count_in(&free).unwrap(), on_free, "{positions:?}");
+            assert_eq!(query.count_in(&capped).unwrap(), on_capped, "{positions:?}");
+            assert_eq!(query.contained_in(&free).unwrap(), on_free == 1);
+        }
+    }
+
+    #[test]
+    fn a_query_without_positions_finds_what_the_plain_matcher_finds() {
+        let target = lacnac(true);
+        let motif = lacnac(false);
+        assert_eq!(
+            MotifQuery::new(motif.clone()).find(&target).unwrap(),
+            find_motif_matches(&target, &motif).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_position_is_required_for_every_motif_residue() {
+        assert_eq!(
+            MotifQuery::with_positions(lacnac(false), &[MotifPosition::Terminal]).unwrap_err(),
+            MotifError::PositionCount {
+                expected: 2,
+                found: 1
+            }
+        );
+    }
+
+    #[test]
+    fn a_candidate_parent_of_an_undefined_fragment_is_not_terminal() {
+        let mut target = lacnac(false);
+        let gal = NodeIndex::new(1);
+        let fuc = target.add_residue(residue_from_kind(ResidueKind::Fuc).unwrap());
+        target.add_undefined_linkage(UndefinedLinkage {
+            child: fuc,
+            child_positions: vec![CarbonPosition(1)],
+            parents: vec![UndefinedParent {
+                residue: gal,
+                positions: vec![CarbonPosition(0)],
+            }],
+        });
+        assert_eq!(
+            lacnac_at(&[MotifPosition::Terminal, MotifPosition::Flexible])
+                .count_in(&target)
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn motif_positions_parse_their_names() {
+        for position in [
+            MotifPosition::Flexible,
+            MotifPosition::Terminal,
+            MotifPosition::Internal,
+            MotifPosition::Reducing,
+        ] {
+            assert_eq!(position.as_str().parse::<MotifPosition>(), Ok(position));
+        }
+        assert!("sideways".parse::<MotifPosition>().is_err());
     }
 
     #[test]

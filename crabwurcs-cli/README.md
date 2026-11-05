@@ -20,7 +20,9 @@ cargo install crabwurcs-cli
 - **Format conversion**: Auto-detect input format and convert to WURCS, IUPAC, GLYCAM, SMILES, MOL, or SDF
 - **SNFG rendering**: Generate publication-quality SVG or PNG graphics
 - **PDB extraction**: Extract glycan structures from PDB and GLYCAM files
-- **Motif highlighting**: Highlight structural motifs with wildcard support
+- **Motif highlighting**: Highlight structural motifs with wildcard support, by name, by position or by residue
+- **Mass and fragments**: Formula, masses, composition and B, C, Y and Z ions
+- **Motif search**: Count motifs, annotate a glycan from the motif library, compare structures
 - **Batch processing**: Handle multiple files and compositions
 
 ## Usage

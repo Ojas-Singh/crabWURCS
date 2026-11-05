@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="snfg-title snfg-desc" viewBox="0 0 290 658" width="290" height="658">
+<title id="snfg-title">SNFG glycan: Gal(b1-4)GlcNAc(b1-2)Man(a1-3)[Man(a1-6)]Man(b1-4)GlcNAc(b1-4)[Fuc(a1-6)]GlcNAc</title>
+<desc id="snfg-desc">Canonical IUPAC condensed: Gal(b1-4)GlcNAc(b1-2)Man(a1-3)[Man(a1-6)]Man(b1-4)GlcNAc(b1-4)[Fuc(a1-6)]GlcNAc. Canonical WURCS: WURCS=2.0/6,8,7/[u2122h_2*NCC/3=O][a2122h-1b_1-5_2*NCC/3=O][a1122h-1b_1-5][a1122h-1a_1-5][a2112h-1b_1-5][a1221m-1a_1-5]/1-2-3-4-2-5-4-6/a4-b1_a6-h1_b4-c1_c3-d1_c6-g1_d2-e1_e4-f1.</desc>
+<metadata id="crabwurcs-notations">
+<crabwurcs:notations xmlns:crabwurcs="https://github.com/Ojas-Singh/crabWURCS/ns/metadata/1">
+    <crabwurcs:iupac-condensed canonical="true" available="true">Gal(b1-4)GlcNAc(b1-2)Man(a1-3)[Man(a1-6)]Man(b1-4)GlcNAc(b1-4)[Fuc(a1-6)]GlcNAc</crabwurcs:iupac-condensed>
+    <crabwurcs:wurcs canonical="true" available="true">WURCS=2.0/6,8,7/[u2122h_2*NCC/3=O][a2122h-1b_1-5_2*NCC/3=O][a1122h-1b_1-5][a1122h-1a_1-5][a2112h-1b_1-5][a1221m-1a_1-5]/1-2-3-4-2-5-4-6/a4-b1_a6-h1_b4-c1_c3-d1_c6-g1_d2-e1_e4-f1</crabwurcs:wurcs>
+    <crabwurcs:source format="iupac-condensed">Gal(b1-4)GlcNAc(b1-2)Man(a1-3)[Man(a1-6)]Man(b1-4)GlcNAc(b1-4)[Fuc(a1-6)]GlcNAc</crabwurcs:source>
+  </crabwurcs:notations>
+</metadata>
+<style>
+  .bond { stroke: #000; stroke-width: 4; fill: none; stroke-linecap: round; }
+  .uncertain { stroke: #555; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-dasharray: 8 7; }
+  .link { font-family: Arial, Helvetica, sans-serif; font-size: 20px; fill: #000; text-anchor: middle; dominant-baseline: central; }
+  .mod-label { font-family: Arial, Helvetica, sans-serif; font-size: 20px; fill: #000; text-anchor: middle; dominant-baseline: central; }
+  .node { fill: none; }
+  .res-label { font-family: Arial, Helvetica, sans-serif; font-size: 11px; fill: #000; text-anchor: middle; dominant-baseline: central; }
+  .reducing-end { font-family: Arial, Helvetica, sans-serif; font-size: 20px; fill: #000; dominant-baseline: central; }
+</style>
+<line x1="120" y1="570" x2="220" y2="570" class="bond"/>
+<text x="0" y="0" class="link" transform="translate(170,556) rotate(0)">α 6</text>
+<line x1="120" y1="570" x2="120" y2="470" class="bond"/>
+<text x="129" y="520" class="link" style="text-anchor: start">β 4</text>
+<line x1="120" y1="470" x2="120" y2="370" class="bond"/>
+<text x="129" y="420" class="link" style="text-anchor: start">β 4</text>
+<line x1="120" y1="370" x2="170" y2="270" class="bond"/>
+<text x="154" y="320" class="link" style="text-anchor: start">α 6</text>
+<line x1="120" y1="370" x2="70" y2="270" class="bond"/>
+<text x="104" y="320" class="link" style="text-anchor: start">α 3</text>
+<line x1="70" y1="270" x2="70" y2="170" class="bond"/>
+<text x="79" y="220" class="link" style="text-anchor: start">β 2</text>
+<line x1="70" y1="170" x2="70" y2="70" class="bond"/>
+<text x="79" y="120" class="link" style="text-anchor: start">β 4</text>
+<line x1="120" y1="570" x2="120" y2="622" class="bond"/>
+<text x="120" y="640" class="reducing-end" style="text-anchor: middle" data-reducing-end="true">Asn</text>
+<rect x="95" y="545" width="50" height="50" fill="#0072BC" stroke="#000000" stroke-width="2"/>
+<polygon points="220,541.1189 195,584.4189 245,584.4189" fill="#ED1C24" stroke="#000000" stroke-width="2"/>
+<rect x="95" y="445" width="50" height="50" fill="#0072BC" stroke="#000000" stroke-width="2"/>
+<circle cx="120" cy="370" r="25" fill="#00A651" stroke="#000000" stroke-width="2"/>
+<circle cx="170" cy="270" r="25" fill="#00A651" stroke="#000000" stroke-width="2"/>
+<circle cx="70" cy="270" r="25" fill="#00A651" stroke="#000000" stroke-width="2"/>
+<rect x="45" y="145" width="50" height="50" fill="#0072BC" stroke="#000000" stroke-width="2"/>
+<circle cx="70" cy="70" r="25" fill="#FFD400" stroke="#000000" stroke-width="2"/>
+</svg>

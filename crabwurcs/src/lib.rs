@@ -38,11 +38,15 @@ pub use crabwurcs_snfg as snfg;
 // Convenience re-exports of the most commonly needed types, so simple
 // consumers don't need to reach into `core::`.
 pub use crabwurcs_core::{
-    CoreError, CoreResult, MotifError, MotifMatch, ResidueGraph, ResidueKind, classify_residue,
-    find_motif_matches, normalize_wurcs, residue_from_kind, standardize_wurcs,
-    write_wurcs_canonical,
+    CoreError, CoreResult, MotifError, MotifMatch, MotifPosition, MotifQuery, ResidueGraph,
+    ResidueKind, classify_residue, find_motif_matches, normalize_wurcs, residue_from_kind,
+    standardize_wurcs, write_wurcs_canonical,
 };
 pub use crabwurcs_iupac::write_iupac_condensed_canonical;
+pub use crabwurcs_mol::mass::{
+    Adduct, Composition, Formula, Fragment, GlycanMass, IonKind, MassError, MassOptions,
+    MassResult, ReducingEnd, glycan_composition, glycan_formula, glycan_fragments, glycan_mass,
+};
 pub use crabwurcs_pdb::{
     ExtractedGlycan, ExtractedGlycanWithProvenance, NamePolicy, PdbReadOptions, PdbReading,
     PdbResidueReference, PdbWarning, PdbWarningKind, ResidueReading, StereoCentre,
@@ -50,10 +54,15 @@ pub use crabwurcs_pdb::{
     extract_glycans_with_provenance_from_str, read_glycans_from_file, read_glycans_from_str,
 };
 pub use crabwurcs_snfg::{
-    HighlightSelection, RenderOptions, SnfgError, SnfgResult, SourceNotation, render_png,
+    CleavageMark, CleavageSide, GridOptions, HighlightSelection, Orientation, RenderOptions,
+    SnfgError, SnfgResult, SourceNotation, render_grid_png, render_grid_svg, render_png,
     render_png_with_motifs, render_png_with_options, render_png_with_selection, render_svg,
     render_svg_with_motifs, render_svg_with_options, render_svg_with_selection, render_symbol_svg,
+    svg_to_png,
 };
+
+pub mod motifs;
+pub use motifs::{NamedMotif, annotate_motifs, named_motif, named_motifs, resolve_motif};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
@@ -258,6 +267,39 @@ pub fn convert(input: &str, from: Format, to: Format) -> ConversionResult<String
         return Err(ConversionError::AutoOutput);
     }
     write_notation(&parse_notation(input, from)?, to)
+}
+
+/// A string that identifies the glycan a graph holds, whatever notation it was
+/// read from and however its residues are numbered. `None` only for a graph no
+/// notation can represent.
+///
+/// A stated anomer is part of the structure: `GlcNAc` and `GlcNAc(b1-` are
+/// different glycans, as are `Gal(?1-4)GlcNAc` and `Gal(b1-4)GlcNAc`.
+pub fn structure_key(graph: &ResidueGraph) -> Option<String> {
+    core::write_wurcs(graph)
+        .ok()
+        .or_else(|| iupac::write_iupac_condensed_canonical(graph).ok())
+}
+
+/// Whether two graphs hold the same glycan; see [`structure_key`].
+pub fn same_structure(left: &ResidueGraph, right: &ResidueGraph) -> bool {
+    match (structure_key(left), structure_key(right)) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    }
+}
+
+/// The mark [`RenderOptions::cleavages`] draws for a fragment ion.
+pub fn cleavage_mark(fragment: &Fragment) -> CleavageMark {
+    CleavageMark {
+        edge: fragment.edge,
+        side: if fragment.kind.keeps_reducing_end() {
+            CleavageSide::Reducing
+        } else {
+            CleavageSide::NonReducing
+        },
+        label: fragment.label.clone(),
+    }
 }
 
 /// How [`convert_with_table`] uses the bundled table of GlycoShape notations.
@@ -536,6 +578,110 @@ mod tests {
             .map(|(column, notation, _, _)| (*column, *notation))
             .collect::<Vec<_>>();
         assert_eq!(found, TABLE_RECORDS_THAT_DISAGREE);
+    }
+
+    /// The graph with its residues renumbered: what a different notation, or
+    /// the same notation with the branches written the other way, produces.
+    fn renumbered(graph: &ResidueGraph, seed: usize) -> ResidueGraph {
+        let count = graph.node_count();
+        let mut order = (0..count).collect::<Vec<_>>();
+        // Any fixed shuffle will do; this one is a simple LCG walk.
+        let mut state = seed;
+        for index in (1..count).rev() {
+            state = state.wrapping_mul(1103515245).wrapping_add(12345);
+            order.swap(index, (state >> 8) % (index + 1));
+        }
+        let mut copy = ResidueGraph::new();
+        let mut nodes = HashMap::new();
+        for old in &order {
+            let residue = graph.inner().node_weight((*old as u32).into()).unwrap();
+            nodes.insert(*old, copy.add_residue(residue.clone()));
+        }
+        for edge in graph.inner().raw_edges() {
+            copy.add_linkage(
+                nodes[&edge.source().index()],
+                nodes[&edge.target().index()],
+                edge.weight.clone(),
+            );
+        }
+        if let Some(root) = graph.root() {
+            copy.set_root(nodes[&root.index()]);
+        }
+        copy.set_composition(graph.is_composition());
+        copy
+    }
+
+    #[test]
+    fn structure_keys_do_not_depend_on_notation_or_numbering() {
+        // Written with the branches either way round, and in other notations.
+        for (left, right) in [
+            ("Fuc(a1-3)[Gal(b1-4)]GlcNAc", "Gal(b1-4)[Fuc(a1-3)]GlcNAc"),
+            (
+                "Man(a1-3)[Man(a1-6)]Man(b1-4)GlcNAc",
+                "Man(a1-6)[Man(a1-3)]Man(b1-4)GlcNAc",
+            ),
+            (
+                "Gal(b1-4)GlcNAc",
+                "WURCS=2.0/2,2,1/[a2112h-1b_1-5][u2122h_2*NCC/3=O]/1-2/b4-a1",
+            ),
+            ("Gal(b1-4)GlcNAc", "DGalpb1-4DGlcpNAc"),
+        ] {
+            let left = parse_notation(left, Format::Auto).unwrap();
+            let right = parse_notation(right, Format::Auto).unwrap();
+            assert!(same_structure(&left, &right));
+        }
+
+        let mut checked = 0;
+        for record in corpus_records() {
+            let graph = core::parse_wurcs(record.wurcs).unwrap();
+            let key = structure_key(&graph).unwrap();
+            for seed in [1, 2, 3] {
+                let copy = renumbered(&graph, seed);
+                assert_eq!(
+                    structure_key(&copy).as_ref(),
+                    Some(&key),
+                    "{}",
+                    record.wurcs
+                );
+            }
+            checked += 1;
+        }
+        assert_eq!(checked, 942);
+    }
+
+    #[test]
+    fn different_structures_have_different_keys() {
+        for (left, right) in [
+            ("Gal(b1-4)GlcNAc", "Gal(b1-3)GlcNAc"),
+            ("Gal(b1-4)GlcNAc", "Gal(a1-4)GlcNAc"),
+            ("Gal(b1-4)GlcNAc", "Glc(b1-4)GlcNAc"),
+            // A stated anomer or position is more than an open one.
+            ("Gal(b1-4)GlcNAc", "Gal(?1-4)GlcNAc"),
+            ("Gal(b1-4)GlcNAc", "Gal(b1-?)GlcNAc"),
+            ("GlcNAc", "GlcNAc(b1-"),
+        ] {
+            let left = parse_notation(left, Format::Auto).unwrap();
+            let right = parse_notation(right, Format::Auto).unwrap();
+            assert!(!same_structure(&left, &right));
+        }
+    }
+
+    #[test]
+    fn a_fragment_marks_the_side_it_keeps() {
+        let graph = parse_notation("Gal(b1-4)GlcNAc", Format::Auto).unwrap();
+        let fragments = glycan_fragments(&graph, &MassOptions::default(), Adduct::Proton).unwrap();
+        let options = RenderOptions {
+            cleavages: fragments
+                .iter()
+                .filter(|fragment| matches!(fragment.kind, IonKind::B | IonKind::Y))
+                .map(cleavage_mark)
+                .collect(),
+            ..RenderOptions::default()
+        };
+        let svg = render_svg_with_options(&graph, &options).unwrap();
+        assert!(svg.contains(">B1</text>") && svg.contains(">Y1</text>"));
+        assert!(svg.contains("data-kept=\"reducing\""));
+        assert!(svg.contains("data-kept=\"non-reducing\""));
     }
 
     const HIGHLIGHT_TARGET: &str = "Neu5Ac(a2-3)Gal(b1-4)[Fuc(a1-3)]GlcNAc(b1-2)Man(a1-3)[Gal(b1-3)[Fuc(a1-4)]GlcNAc(b1-2)Man(a1-6)]Man(b1-4)GlcNAc(b1-4)[Fuc(a1-6)]GlcNAc";

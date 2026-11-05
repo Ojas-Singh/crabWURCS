@@ -1,11 +1,12 @@
 use crabwurcs_core::{
-    Monosaccharide, MotifError, ResidueGraph, ResidueKind, classify_residue,
-    classify_residue_configuration, find_motif_matches,
+    Monosaccharide, MotifError, MotifMatch, RepeatCount, ResidueGraph, ResidueKind,
+    classify_residue, classify_residue_configuration, find_motif_matches,
 };
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use std::collections::{BTreeSet, HashMap};
+use std::str::FromStr;
 use thiserror::Error;
 
 // ── Error types ────────────────────────────────────────────────────────────
@@ -36,6 +37,12 @@ pub enum SnfgError {
 
     #[error("failed to encode PNG: {0}")]
     PngEncoding(String),
+
+    #[error("no residue {index} in a glycan of {count} residues")]
+    InvalidResidueIndex { index: usize, count: usize },
+
+    #[error("no bond {index} in a glycan of {count} bonds")]
+    InvalidBondIndex { index: usize, count: usize },
 }
 
 pub type SnfgResult<T> = Result<T, SnfgError>;
@@ -817,8 +824,58 @@ pub const V_SPACING: f64 = 100.0;
 pub const BOND_W: f64 = 4.0;
 pub const LABEL_SIZE: f64 = 20.0;
 pub const PNG_SCALE: u32 = 2;
+/// Share of the usual residue spacing used by [`RenderOptions::compact`].
+const COMPACT_SPACING: f64 = 0.7;
 
 // ── Options ────────────────────────────────────────────────────────────────
+
+/// Where the reducing end of a glycan is drawn, and with it the direction the
+/// glycan grows in. The higher acceptor position of a branch stays above the
+/// lower one in the horizontal orientations and to its right in the vertical
+/// ones (an N-glycan's α1-6 arm is drawn above, or to the right of, α1-3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Orientation {
+    /// Reducing end on the right, the SNFG convention.
+    #[default]
+    RootRight,
+    /// Reducing end on the left, growing to the right.
+    RootLeft,
+    /// Reducing end at the bottom, growing upwards.
+    RootBottom,
+    /// Reducing end at the top, growing downwards.
+    RootTop,
+}
+
+impl Orientation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RootRight => "root-right",
+            Self::RootLeft => "root-left",
+            Self::RootBottom => "root-bottom",
+            Self::RootTop => "root-top",
+        }
+    }
+
+    pub const fn is_vertical(self) -> bool {
+        matches!(self, Self::RootBottom | Self::RootTop)
+    }
+}
+
+impl FromStr for Orientation {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+            "root-right" | "right-to-left" | "rl" | "horizontal" => Ok(Self::RootRight),
+            "root-left" | "left-to-right" | "lr" => Ok(Self::RootLeft),
+            "root-bottom" | "bottom-up" | "bt" | "vertical" => Ok(Self::RootBottom),
+            "root-top" | "top-down" | "tb" => Ok(Self::RootTop),
+            other => Err(format!(
+                "unknown orientation: {other} (expected root-right, root-left, root-bottom or root-top)"
+            )),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct SourceNotation {
@@ -845,6 +902,21 @@ pub struct RenderOptions {
     /// Exact source notation supplied by the caller. When absent, metadata
     /// falls back to source text retained by the parsed graph.
     pub source_notation: Option<SourceNotation>,
+    /// Where the reducing end is drawn.
+    pub orientation: Orientation,
+    /// Tighter spacing and no linkage text, for heatmap axes and tables.
+    pub compact: bool,
+    /// Text drawn past the reducing end (`Asn`, `Ser/Thr`, `-OH`, `2-AB`).
+    pub reducing_end: Option<String>,
+    /// Draw repeat units in square brackets with their repeat count instead
+    /// of a dashed bond closing the unit.
+    pub repeat_brackets: bool,
+    /// Draw undefined antennae and substituents above the structure over a
+    /// bracket across their candidate parents (the SNFG convention for a
+    /// fragment of unknown attachment) instead of dashed bonds to each one.
+    pub floating_fragments: bool,
+    /// Fragment-ion cleavages to mark on the bonds.
+    pub cleavages: Vec<CleavageMark>,
 }
 
 impl Default for RenderOptions {
@@ -856,12 +928,39 @@ impl Default for RenderOptions {
             font_family: "Arial, Helvetica, sans-serif".into(),
             scale: 1.0,
             source_notation: None,
+            orientation: Orientation::default(),
+            compact: false,
+            reducing_end: None,
+            repeat_brackets: false,
+            floating_fragments: false,
+            cleavages: Vec::new(),
         }
     }
 }
 
+/// The fragment a cleavage keeps, which decides the side its mark turns to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CleavageSide {
+    /// B and C ions keep the non-reducing end.
+    NonReducing,
+    /// Y and Z ions keep the reducing end.
+    Reducing,
+}
+
+/// A Domon–Costello cleavage mark on one bond of the drawing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CleavageMark {
+    /// Edge index of the cleaved bond in the `ResidueGraph`.
+    pub edge: usize,
+    pub side: CleavageSide,
+    /// Ion label (`B2`, `Y3α`).
+    pub label: String,
+}
+
 // ── Tree layout ────────────────────────────────────────────────────────────
 
+/// `x` counts residues from the reducing end (fragments of a floating band
+/// sit between two of them); `y` is the lane, in layout pixels.
 #[derive(Debug, Clone, Default)]
 struct LayoutInfo {
     x: f64,
@@ -873,8 +972,20 @@ struct LayoutInfo {
 fn compute_layout(graph: &ResidueGraph, root: NodeIndex) -> HashMap<usize, LayoutInfo> {
     let mut info = HashMap::new();
     let mut visited = std::collections::HashSet::new();
+    layout_components(graph, root, &mut info, &mut visited);
+    info
+}
+
+/// Lay out `root`'s component and every component not already `visited`,
+/// and centre them around y = 0.
+fn layout_components(
+    graph: &ResidueGraph,
+    root: NodeIndex,
+    info: &mut HashMap<usize, LayoutInfo>,
+    visited: &mut std::collections::HashSet<usize>,
+) {
     let mut next_leaf = 0usize;
-    layout_subtree(graph, root, 0, &mut next_leaf, &mut info, &mut visited);
+    layout_subtree(graph, root, 0, &mut next_leaf, info, visited);
     // WURCS compositions and undefined antennae can contain disconnected
     // components. Lay every component out instead of silently omitting it.
     for node in graph.inner().node_indices() {
@@ -882,11 +993,11 @@ fn compute_layout(graph: &ResidueGraph, root: NodeIndex) -> HashMap<usize, Layou
             if next_leaf > 0 {
                 next_leaf += 1;
             }
-            layout_subtree(graph, node, 0, &mut next_leaf, &mut info, &mut visited);
+            layout_subtree(graph, node, 0, &mut next_leaf, info, visited);
         }
     }
 
-    resolve_triangle_collisions(graph, &mut info);
+    resolve_triangle_collisions(graph, info);
 
     // centre around y=0
     let min_y = info.values().map(|li| li.y).fold(f64::MAX, f64::min);
@@ -895,14 +1006,167 @@ fn compute_layout(graph: &ResidueGraph, root: NodeIndex) -> HashMap<usize, Layou
     for li in info.values_mut() {
         li.y += shift;
     }
-    info
+}
+
+/// One thing of unknown attachment in a floating band.
+#[derive(Debug, Clone)]
+enum FloatingItem {
+    /// An undefined fragment: the node index of its reducing-end residue.
+    Fragment(usize),
+    /// An undefined substituent, by its MAP code and the lane of its label.
+    Substituent(String, f64),
+}
+
+/// Fragments of unknown attachment that share their candidate parents, drawn
+/// above the structure over one bracket.
+#[derive(Debug, Clone)]
+struct FloatingBand {
+    /// Lane of the bracket.
+    lane: f64,
+    /// Depth of every candidate parent, in ascending order.
+    depths: Vec<f64>,
+    /// Depth of the stem that joins the items to the bracket.
+    stem: f64,
+    items: Vec<FloatingItem>,
+}
+
+impl FloatingBand {
+    /// The lanes the band draws on itself. Fragments are in the layout.
+    fn lanes(&self) -> impl Iterator<Item = f64> + Clone + '_ {
+        let labels = self.items.iter().filter_map(|item| match item {
+            FloatingItem::Substituent(_, lane) => Some(*lane),
+            FloatingItem::Fragment(_) => None,
+        });
+        std::iter::once(self.lane).chain(labels)
+    }
+}
+
+/// Gap between a bracket and whatever is drawn next to it, in layout pixels.
+const FLOATING_GAP: f64 = 60.0;
+/// How far from the stem a floating fragment starts, in residues.
+const FLOATING_REACH: f64 = 0.7;
+
+/// The layout of a glycan whose undefined fragments float above the main
+/// structure. Fragments attached to several candidates are grouped by their
+/// candidates; everything else is laid out as usual.
+fn compute_floating_layout(
+    graph: &ResidueGraph,
+    root: NodeIndex,
+) -> (HashMap<usize, LayoutInfo>, Vec<FloatingBand>) {
+    let mut fragments = std::collections::HashSet::new();
+    let main = graph.subtree(root);
+    for undefined in graph.undefined_linkages() {
+        if !main.contains(&undefined.child.index()) {
+            fragments.extend(graph.subtree(undefined.child));
+        }
+    }
+
+    let mut info = HashMap::new();
+    // A fragment is laid out on its own below; marking it visited keeps it
+    // out of the main structure's lanes.
+    let mut visited = fragments.clone();
+    layout_components(graph, root, &mut info, &mut visited);
+
+    // Group by candidate parents, keeping the order of first appearance.
+    let mut groups: Vec<(BTreeSet<usize>, Vec<FloatingItem>)> = Vec::new();
+    let mut add = |parents: BTreeSet<usize>, item: FloatingItem| match groups
+        .iter_mut()
+        .find(|(known, _)| *known == parents)
+    {
+        Some((_, items)) => items.push(item),
+        None => groups.push((parents, vec![item])),
+    };
+    for undefined in graph.undefined_linkages() {
+        let child = undefined.child.index();
+        if fragments.contains(&child) {
+            let parents = undefined.parents.iter().map(|p| p.residue.index());
+            add(parents.collect(), FloatingItem::Fragment(child));
+        }
+    }
+    for modification in graph.undefined_modifications() {
+        let parents = modification.parents.iter().map(|p| p.residue.index());
+        add(
+            parents.collect(),
+            FloatingItem::Substituent(modification.map_code.clone(), 0.0),
+        );
+    }
+
+    // The main structure is centred on lane 0, so its top is at or above it.
+    let mut cursor = info.values().map(|li| li.y).fold(0.0, f64::min);
+    let mut bands = Vec::new();
+    for (parents, items) in groups {
+        let mut depths = parents
+            .iter()
+            .filter_map(|parent| info.get(parent).map(|li| li.x))
+            .collect::<Vec<_>>();
+        depths.sort_by(f64::total_cmp);
+        depths.dedup();
+        let (first, last) = match (depths.first(), depths.last()) {
+            (Some(first), Some(last)) => (*first, *last),
+            _ => (0.0, 0.0),
+        };
+        let stem = (first + last) / 2.0;
+        let lane = cursor - FLOATING_GAP;
+        // Lowest free lane of the band; items stack upwards from here.
+        let mut base = lane - FLOATING_GAP;
+        let mut band_items = Vec::with_capacity(items.len());
+        for item in items {
+            match item {
+                FloatingItem::Fragment(child) => {
+                    let mut fragment = HashMap::new();
+                    let mut seen = std::collections::HashSet::new();
+                    let mut next_leaf = 0usize;
+                    layout_subtree(
+                        graph,
+                        NodeIndex::new(child),
+                        0,
+                        &mut next_leaf,
+                        &mut fragment,
+                        &mut seen,
+                    );
+                    resolve_triangle_collisions(graph, &mut fragment);
+                    let lowest = fragment.values().map(|li| li.y).fold(f64::MIN, f64::max);
+                    let highest = fragment.values().map(|li| li.y).fold(f64::MAX, f64::min);
+                    let shift = base - lowest;
+                    for (node, position) in fragment {
+                        info.insert(
+                            node,
+                            LayoutInfo {
+                                x: position.x + stem + FLOATING_REACH,
+                                y: position.y + shift,
+                            },
+                        );
+                    }
+                    base += highest - lowest - V_SPACING;
+                    band_items.push(FloatingItem::Fragment(child));
+                }
+                FloatingItem::Substituent(map_code, _) => {
+                    band_items.push(FloatingItem::Substituent(map_code, base));
+                    base -= V_SPACING * 0.6;
+                }
+            }
+        }
+        cursor = base + V_SPACING * 0.6;
+        bands.push(FloatingBand {
+            lane,
+            depths,
+            stem,
+            items: band_items,
+        });
+    }
+    (info, bands)
 }
 
 fn resolve_triangle_collisions(graph: &ResidueGraph, info: &mut HashMap<usize, LayoutInfo>) {
     let mut branches = graph
         .inner()
         .edge_references()
-        .filter(|edge| is_fucose(graph, edge.target()) && is_terminal(graph, edge.target()))
+        .filter(|edge| {
+            is_fucose(graph, edge.target())
+                && is_terminal(graph, edge.target())
+                && info.contains_key(&edge.source().index())
+                && info.contains_key(&edge.target().index())
+        })
         .map(|edge| {
             (
                 edge.source(),
@@ -1202,6 +1466,48 @@ pub struct HighlightSelection {
     pub edge_indices: BTreeSet<usize>,
 }
 
+impl HighlightSelection {
+    /// The union of motif occurrences, for example of a positional
+    /// [`MotifQuery`](crabwurcs_core::MotifQuery).
+    pub fn from_matches<'a>(matches: impl IntoIterator<Item = &'a MotifMatch>) -> Self {
+        let mut selection = Self::default();
+        for found in matches {
+            selection.node_indices.extend(&found.node_indices);
+            selection.edge_indices.extend(&found.edge_indices);
+        }
+        selection
+    }
+
+    /// The given residues and the bonds between them, for residues known by
+    /// their node index (PDB provenance, a fragment ion).
+    pub fn from_residues(
+        graph: &ResidueGraph,
+        residues: impl IntoIterator<Item = usize>,
+    ) -> SnfgResult<Self> {
+        let count = graph.node_count();
+        let node_indices = residues.into_iter().collect::<BTreeSet<_>>();
+        if let Some(index) = node_indices.iter().find(|index| **index >= count) {
+            return Err(SnfgError::InvalidResidueIndex {
+                index: *index,
+                count,
+            });
+        }
+        let edge_indices = graph
+            .inner()
+            .edge_references()
+            .filter(|edge| {
+                node_indices.contains(&edge.source().index())
+                    && node_indices.contains(&edge.target().index())
+            })
+            .map(|edge| edge.id().index())
+            .collect();
+        Ok(Self {
+            node_indices,
+            edge_indices,
+        })
+    }
+}
+
 /// Render an SNFG SVG with exactly the supplied graph nodes and edges
 /// highlighted. This is intended for callers that have already resolved a
 /// specific occurrence and must not highlight every matching motif.
@@ -1315,7 +1621,117 @@ pub fn render_symbol_svg(residue: &Monosaccharide, opts: &RenderOptions) -> Snfg
     Ok(svg)
 }
 
-fn svg_to_png(svg: &str) -> SnfgResult<Vec<u8>> {
+/// Options of [`render_grid_svg`].
+#[derive(Debug, Clone)]
+pub struct GridOptions {
+    /// Number of columns; at least one is used.
+    pub columns: usize,
+    /// One caption per glycan, printed below it. Missing ones print nothing.
+    pub labels: Vec<String>,
+    /// How each glycan is drawn.
+    pub render: RenderOptions,
+}
+
+impl Default for GridOptions {
+    fn default() -> Self {
+        Self {
+            columns: 4,
+            labels: Vec::new(),
+            render: RenderOptions::default(),
+        }
+    }
+}
+
+/// The width and height a generated drawing declares.
+fn declared_size(svg: &str) -> (f64, f64) {
+    let header = &svg[..svg.find('>').unwrap_or(svg.len())];
+    let value = |name: &str| {
+        let pattern = format!(" {name}=\"");
+        header
+            .find(&pattern)
+            .map(|start| &header[start + pattern.len()..])
+            .and_then(|rest| rest.split('"').next())
+            .and_then(|number| number.parse().ok())
+            .unwrap_or(0.0)
+    };
+    (value("width"), value("height"))
+}
+
+/// Draw several glycans on one SVG canvas, in rows. Each cell keeps its own
+/// drawing and notations, with its element ids made unique.
+pub fn render_grid_svg(graphs: &[ResidueGraph], options: &GridOptions) -> SnfgResult<String> {
+    let columns = options.columns.max(1);
+    let scale = options.render.scale;
+    let cells = graphs
+        .iter()
+        .map(|graph| render_svg_with_options(graph, &options.render))
+        .collect::<SnfgResult<Vec<_>>>()?;
+    let sizes = cells
+        .iter()
+        .map(|cell| declared_size(cell))
+        .collect::<Vec<_>>();
+    let gap = 16.0 * scale;
+    let caption = LABEL_SIZE * scale * 1.5;
+    let label_of = |index: usize| options.labels.get(index).filter(|label| !label.is_empty());
+
+    let mut widths = vec![0.0f64; columns];
+    let mut heights = vec![0.0f64; cells.len().div_ceil(columns)];
+    for (index, (width, height)) in sizes.iter().enumerate() {
+        let (row, column) = (index / columns, index % columns);
+        let label_height = if label_of(index).is_some() {
+            caption
+        } else {
+            0.0
+        };
+        widths[column] = widths[column].max(*width);
+        heights[row] = heights[row].max(height + label_height);
+    }
+    let total = |sizes: &[f64]| sizes.iter().sum::<f64>() + gap * (sizes.len() + 1) as f64;
+    let (width, height) = (total(&widths), total(&heights));
+
+    let mut svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" role=\"img\" viewBox=\"0 0 {width} {height}\" width=\"{width}\" height=\"{height}\">\n<title>SNFG glycans</title>\n<style>\n  .grid-label {{ font-family: {}; font-size: {}px; fill: #000; text-anchor: middle; dominant-baseline: central; }}\n</style>\n",
+        options.render.font_family,
+        LABEL_SIZE * scale
+    );
+    for (index, cell) in cells.iter().enumerate() {
+        let (row, column) = (index / columns, index % columns);
+        let (cell_width, cell_height) = sizes[index];
+        let left = gap * (column + 1) as f64 + widths[..column].iter().sum::<f64>();
+        let top = gap * (row + 1) as f64 + heights[..row].iter().sum::<f64>();
+        let x = left + (widths[column] - cell_width) / 2.0;
+        let label = label_of(index);
+        let label_height = if label.is_some() { caption } else { 0.0 };
+        let y = top + (heights[row] - cell_height - label_height) / 2.0;
+        let cell = cell
+            .replacen("<svg ", &format!("<svg x=\"{x}\" y=\"{y}\" "), 1)
+            .replace("snfg-title", &format!("snfg-title-{index}"))
+            .replace("snfg-desc", &format!("snfg-desc-{index}"))
+            .replace(
+                "id=\"crabwurcs-notations\"",
+                &format!("id=\"crabwurcs-notations-{index}\""),
+            );
+        svg.push_str(&cell);
+        if let Some(label) = label {
+            svg.push_str(&format!(
+                "<text x=\"{}\" y=\"{}\" class=\"grid-label\">{}</text>\n",
+                left + widths[column] / 2.0,
+                top + heights[row] - caption / 2.0,
+                escape_xml_text(label)
+            ));
+        }
+    }
+    svg.push_str("</svg>\n");
+    Ok(svg)
+}
+
+/// [`render_grid_svg`] as a transparent PNG at twice its dimensions.
+pub fn render_grid_png(graphs: &[ResidueGraph], options: &GridOptions) -> SnfgResult<Vec<u8>> {
+    svg_to_png(&render_grid_svg(graphs, options)?)
+}
+
+/// Rasterize any SVG as a transparent PNG at twice its dimensions.
+pub fn svg_to_png(svg: &str) -> SnfgResult<Vec<u8>> {
     let mut options = resvg::usvg::Options::default();
     options.fontdb_mut().load_system_fonts();
     let tree = resvg::usvg::Tree::from_str(svg, &options)
@@ -1375,26 +1791,114 @@ fn render_svg_internal(
     }
 
     let root = graph.root().unwrap_or_else(|| NodeIndex::from(0u32));
-    let layout = compute_layout(graph, root);
+    let float = opts.floating_fragments
+        && !(graph.undefined_linkages().is_empty() && graph.undefined_modifications().is_empty());
+    let (layout, bands) = if float {
+        compute_floating_layout(graph, root)
+    } else {
+        (compute_layout(graph, root), Vec::new())
+    };
 
-    let max_depth = layout.values().map(|li| li.x).fold(0.0f64, f64::max);
-    let min_y = layout.values().map(|li| li.y).fold(f64::MAX, f64::min);
-    let max_y = layout.values().map(|li| li.y).fold(f64::MIN, f64::max);
+    let repeats = if opts.repeat_brackets {
+        repeat_brackets(graph, &layout)
+    } else {
+        Vec::new()
+    };
+    let lanes = layout
+        .values()
+        .map(|li| li.y)
+        .chain(bands.iter().flat_map(FloatingBand::lanes));
+    let min_y = lanes.clone().fold(f64::MAX, f64::min);
+    let max_y = lanes.fold(f64::MIN, f64::max);
+    let label_reach = bands
+        .iter()
+        .filter(|band| {
+            band.items
+                .iter()
+                .any(|item| matches!(item, FloatingItem::Substituent(..)))
+        })
+        .map(|band| band.stem + FLOATING_REACH + 0.45);
+    let max_depth = layout
+        .values()
+        .map(|li| li.x)
+        .chain(label_reach)
+        .fold(0.0f64, f64::max);
 
     let s = opts.scale;
-    let pad = if graph.undefined_modifications().is_empty() {
-        70.0 * s
+    let vertical = opts.orientation.is_vertical();
+    let spacing = if opts.compact { COMPACT_SPACING } else { 1.0 };
+    let has_modification_label = |residue: &Monosaccharide| {
+        let labels = build_modification_labels(residue);
+        !labels.above.is_empty() || !labels.below.is_empty()
+    };
+    let margin = if !opts.compact {
+        70.0
+    } else if inner.node_weights().any(has_modification_label) {
+        52.0
+    } else {
+        36.0
+    };
+    let mut pad = if graph.undefined_modifications().is_empty() || float {
+        margin * s
     } else {
         110.0 * s
     };
-    let canvas_w = (max_depth * H_SPACING * s) + 2.0 * pad;
-    let canvas_h = (max_y - min_y) * s + 2.0 * pad;
+    if !repeats.is_empty() {
+        pad = pad.max(90.0 * s);
+    }
+    if let Some(longest) = opts.cleavages.iter().map(|m| m.label.chars().count()).max() {
+        let label = if vertical {
+            longest as f64 * CLEAVAGE_LABEL_SIZE * 0.62
+        } else {
+            CLEAVAGE_LABEL_SIZE
+        };
+        pad = pad.max((CLEAVAGE_REACH + 14.0 + label + 6.0) * s);
+    }
 
-    // RL orientation: root at right (x = canvas_w - pad), children extend left
-    let offset_y = -min_y * s + pad;
-    let to_canvas = |li: &LayoutInfo| -> (f64, f64) {
-        (canvas_w - pad - li.x * H_SPACING * s, li.y * s + offset_y)
+    // Past the root the canvas needs room for the reducing-end text.
+    let reducing_end = opts
+        .reducing_end
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
+    let text_width = reducing_end.map_or(0.0, |text| {
+        text.chars().count() as f64 * LABEL_SIZE * s * 0.62
+    });
+    let mut root_extra = 0.0;
+    if reducing_end.is_some() {
+        let reach =
+            REDUCING_END_STUB * s + 8.0 * s + if vertical { LABEL_SIZE * s } else { text_width };
+        root_extra = (reach + 8.0 * s - pad).max(0.0);
+        if vertical {
+            pad = pad.max(text_width / 2.0 + 8.0 * s);
+        }
+    }
+
+    let depth_extent = max_depth * (H_SPACING * spacing) * s;
+    let lane_scale = spacing * s;
+    let lane_extent = (max_y - min_y) * lane_scale;
+    let (canvas_w, canvas_h) = if vertical {
+        (
+            lane_extent + 2.0 * pad,
+            depth_extent + 2.0 * pad + root_extra,
+        )
+    } else {
+        (
+            depth_extent + 2.0 * pad + root_extra,
+            lane_extent + 2.0 * pad,
+        )
     };
+    let frame = Frame {
+        orientation: opts.orientation,
+        width: canvas_w,
+        height: canvas_h,
+        root_pad: pad + root_extra,
+        depth_step: H_SPACING * spacing,
+        scale: s,
+        lane_scale,
+        lane_offset: -min_y * lane_scale + pad,
+    };
+    let to_canvas = |li: &LayoutInfo| frame.at(li);
 
     // ── SVG header ────────────────────────────────────────────────────
     let highlight_css = if highlights.is_some() {
@@ -1403,6 +1907,35 @@ fn render_svg_internal(
         ""
     };
     let metadata = svg_metadata(graph, opts);
+    let mut extra_css = String::new();
+    if !repeats.is_empty() || !bands.is_empty() {
+        extra_css.push_str(&format!(
+            "  .bracket {{ fill: none; stroke-width: {}; stroke-linecap: square; }}\n",
+            2.5 * s
+        ));
+    }
+    if !repeats.is_empty() {
+        extra_css.push_str(&format!(
+            "  .repeat-count {{ font-family: {}; font-size: {}px; font-style: italic; fill: #000; text-anchor: middle; dominant-baseline: central; }}\n",
+            opts.font_family,
+            LABEL_SIZE * s
+        ));
+    }
+    if reducing_end.is_some() {
+        extra_css.push_str(&format!(
+            "  .reducing-end {{ font-family: {}; font-size: {}px; fill: #000; dominant-baseline: central; }}\n",
+            opts.font_family,
+            LABEL_SIZE * s
+        ));
+    }
+    if !opts.cleavages.is_empty() {
+        extra_css.push_str(&format!(
+            "  .cleavage {{ fill: none; stroke: {CLEAVAGE_COLOUR}; stroke-width: {}; stroke-linejoin: round; stroke-linecap: round; }}\n  .cleavage-label {{ font-family: {}; font-size: {}px; fill: {CLEAVAGE_COLOUR}; dominant-baseline: central; }}\n",
+            2.5 * s,
+            opts.font_family,
+            CLEAVAGE_LABEL_SIZE * s
+        ));
+    }
     let mut svg = format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="snfg-title snfg-desc" viewBox="0 0 {w} {h}" width="{w}" height="{h}">
 {metadata}<style>
@@ -1412,7 +1945,7 @@ fn render_svg_internal(
   .mod-label {{ font-family: {ff}; font-size: {ls}px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
   .node {{ fill: none; }}
   .res-label {{ font-family: {ff}; font-size: 11px; fill: #000; text-anchor: middle; dominant-baseline: central; }}
-{config_css}{highlight_css}</style>
+{config_css}{extra_css}{highlight_css}</style>
 "#,
         config_css = configuration_label_css(graph, &opts.font_family, s),
         w = canvas_w,
@@ -1425,8 +1958,13 @@ fn render_svg_internal(
         metadata = metadata,
     );
 
+    let linkage_text = opts.show_linkages && !opts.compact;
+
     // ── Edges and linkage labels ──────────────────────────────────────
     for edge in inner.edge_references() {
+        if opts.repeat_brackets && edge.weight().repeat.is_some() {
+            continue;
+        }
         let (Some(parent_layout), Some(child_layout)) = (
             layout.get(&edge.source().index()),
             layout.get(&edge.target().index()),
@@ -1452,9 +1990,10 @@ fn render_svg_internal(
             r#"<line x1="{px}" y1="{py}" x2="{cx}" y2="{cy}" class="{class}"/>
 "#,
         ));
-        if opts.show_linkages {
-            draw_linkage_text(
+        if linkage_text {
+            draw_bond_label(
                 &mut svg,
+                opts.orientation,
                 px,
                 py,
                 cx,
@@ -1469,6 +2008,14 @@ fn render_svg_internal(
     }
 
     for undefined in graph.undefined_linkages() {
+        let floating = bands.iter().any(|band| {
+            band.items.iter().any(|item| {
+                matches!(item, FloatingItem::Fragment(child) if *child == undefined.child.index())
+            })
+        });
+        if floating {
+            continue;
+        }
         let Some(child_layout) = layout.get(&undefined.child.index()) else {
             continue;
         };
@@ -1486,8 +2033,8 @@ fn render_svg_internal(
                 r#"<line x1="{px}" y1="{py}" x2="{cx}" y2="{cy}" class="uncertain"/>
 "#,
             ));
-            if opts.show_linkages && candidate_index == 0 {
-                draw_linkage_text(&mut svg, px, py, cx, cy, "?", s);
+            if linkage_text && candidate_index == 0 {
+                draw_bond_label(&mut svg, opts.orientation, px, py, cx, cy, "?", s);
             }
             if highlights.is_some() {
                 svg.push_str("</g>\n");
@@ -1495,7 +2042,24 @@ fn render_svg_internal(
         }
     }
 
-    for modification in graph.undefined_modifications() {
+    for band in &bands {
+        draw_floating_band(
+            &mut svg,
+            band,
+            graph,
+            &layout,
+            &frame,
+            linkage_text,
+            highlights.is_some(),
+        );
+    }
+
+    let unbanded_modifications = if bands.is_empty() {
+        graph.undefined_modifications()
+    } else {
+        &[]
+    };
+    for modification in unbanded_modifications {
         let candidates = modification
             .parents
             .iter()
@@ -1505,8 +2069,26 @@ fn render_svg_internal(
         if candidates.is_empty() {
             continue;
         }
-        let label_x = candidates.iter().map(|(x, _)| *x).fold(f64::MIN, f64::max) + 65.0 * s;
-        let label_y = candidates.iter().map(|(_, y)| y).sum::<f64>() / candidates.len() as f64;
+        let mean_x = || candidates.iter().map(|(x, _)| x).sum::<f64>() / candidates.len() as f64;
+        let mean_y = || candidates.iter().map(|(_, y)| y).sum::<f64>() / candidates.len() as f64;
+        let (label_x, label_y) = match opts.orientation {
+            Orientation::RootRight => (
+                candidates.iter().map(|(x, _)| *x).fold(f64::MIN, f64::max) + 65.0 * s,
+                mean_y(),
+            ),
+            Orientation::RootLeft => (
+                candidates.iter().map(|(x, _)| *x).fold(f64::MAX, f64::min) - 65.0 * s,
+                mean_y(),
+            ),
+            Orientation::RootBottom => (
+                mean_x(),
+                candidates.iter().map(|(_, y)| *y).fold(f64::MIN, f64::max) + 65.0 * s,
+            ),
+            Orientation::RootTop => (
+                mean_x(),
+                candidates.iter().map(|(_, y)| *y).fold(f64::MAX, f64::min) - 65.0 * s,
+            ),
+        };
         if highlights.is_some() {
             svg.push_str(r#"<g class="motif-dimmed" data-undefined-modification="true">"#);
             svg.push('\n');
@@ -1533,6 +2115,45 @@ fn render_svg_internal(
         }
     }
 
+    for repeat in &repeats {
+        draw_repeat_bracket(&mut svg, repeat, &frame, highlights.is_some());
+    }
+
+    if let (Some(text), Some(root_layout)) = (reducing_end, layout.get(&root.index())) {
+        draw_reducing_end(
+            &mut svg,
+            text,
+            root_layout,
+            &frame,
+            highlights.is_some_and(|selection| !selection.node_indices.contains(&root.index())),
+        );
+    }
+
+    for mark in &opts.cleavages {
+        let Some(edge) = inner
+            .edge_references()
+            .find(|edge| edge.id().index() == mark.edge)
+        else {
+            return Err(SnfgError::InvalidBondIndex {
+                index: mark.edge,
+                count: inner.edge_count(),
+            });
+        };
+        if let (Some(parent), Some(child)) = (
+            layout.get(&edge.source().index()),
+            layout.get(&edge.target().index()),
+        ) {
+            draw_cleavage(
+                &mut svg,
+                mark,
+                frame.at(parent),
+                frame.at(child),
+                linkage_text,
+                s,
+            );
+        }
+    }
+
     // ── Nodes ──────────────────────────────────────────────────────────
     for node_idx in inner.node_indices() {
         if let (Some(li), Some(residue)) =
@@ -1553,23 +2174,39 @@ fn render_svg_internal(
             // Put N- and lower-ring O-sulfates below the symbol and the
             // remaining O-sulfates above it.
             let mod_labels = build_modification_labels(residue);
-            if !mod_labels.above.is_empty() {
-                let mod_label = escape_xml_text(&mod_labels.above);
-                svg.push_str(&format!(
-                    "<text x=\"{x}\" y=\"{y}\" class=\"mod-label\">{lbl}</text>\n",
-                    x = cx,
-                    y = cy - NODE_R * s - 14.0 * s,
-                    lbl = mod_label,
-                ));
-            }
-            if !mod_labels.below.is_empty() {
-                let mod_label = escape_xml_text(&mod_labels.below);
-                svg.push_str(&format!(
-                    "<text x=\"{x}\" y=\"{y}\" class=\"mod-label\">{lbl}</text>\n",
-                    x = cx,
-                    y = cy + NODE_R * s + 14.0 * s,
-                    lbl = mod_label,
-                ));
+            if vertical {
+                // Bonds run through the top and bottom of a vertical symbol.
+                let side = (NODE_R + 9.0) * s;
+                for (text, x, anchor) in [
+                    (&mod_labels.above, cx + side, "start"),
+                    (&mod_labels.below, cx - side, "end"),
+                ] {
+                    if !text.is_empty() {
+                        svg.push_str(&format!(
+                            "<text x=\"{x}\" y=\"{cy}\" class=\"mod-label\" style=\"text-anchor: {anchor}\">{}</text>\n",
+                            escape_xml_text(text),
+                        ));
+                    }
+                }
+            } else {
+                if !mod_labels.above.is_empty() {
+                    let mod_label = escape_xml_text(&mod_labels.above);
+                    svg.push_str(&format!(
+                        "<text x=\"{x}\" y=\"{y}\" class=\"mod-label\">{lbl}</text>\n",
+                        x = cx,
+                        y = cy - NODE_R * s - 14.0 * s,
+                        lbl = mod_label,
+                    ));
+                }
+                if !mod_labels.below.is_empty() {
+                    let mod_label = escape_xml_text(&mod_labels.below);
+                    svg.push_str(&format!(
+                        "<text x=\"{x}\" y=\"{y}\" class=\"mod-label\">{lbl}</text>\n",
+                        x = cx,
+                        y = cy + NODE_R * s + 14.0 * s,
+                        lbl = mod_label,
+                    ));
+                }
             }
 
             if opts.show_labels || is_assigned_symbol(residue, &symbol) {
@@ -1722,6 +2359,374 @@ fn render_composition_svg(
 fn is_assigned_symbol(residue: &Monosaccharide, symbol: &Symbol) -> bool {
     symbol.shape == Shape::Pentagon
         && classify_residue(residue).is_some_and(|kind| kind == ResidueKind::Assigned)
+}
+
+/// Maps layout positions onto the canvas for one orientation.
+struct Frame {
+    orientation: Orientation,
+    width: f64,
+    height: f64,
+    /// Margin on the reducing-end side of the canvas.
+    root_pad: f64,
+    depth_step: f64,
+    scale: f64,
+    lane_scale: f64,
+    lane_offset: f64,
+}
+
+impl Frame {
+    fn at(&self, position: &LayoutInfo) -> (f64, f64) {
+        self.offset(position, 0.0, 0.0)
+    }
+
+    /// The canvas point `depth` pixels further from the reducing end and
+    /// `lane` pixels further down the lanes than `position`.
+    fn offset(&self, position: &LayoutInfo, depth: f64, lane: f64) -> (f64, f64) {
+        let along = position.x * self.depth_step * self.scale + depth;
+        let across = position.y * self.lane_scale + self.lane_offset + lane;
+        match self.orientation {
+            Orientation::RootRight => (self.width - self.root_pad - along, across),
+            Orientation::RootLeft => (self.root_pad + along, across),
+            // The upper lanes of a horizontal drawing go to the right.
+            Orientation::RootBottom => (self.width - across, self.height - self.root_pad - along),
+            Orientation::RootTop => (self.width - across, self.root_pad + along),
+        }
+    }
+}
+
+/// Length of the bond drawn to the reducing-end text, from the root's centre.
+const REDUCING_END_STUB: f64 = 52.0;
+const CLEAVAGE_COLOUR: &str = "#C2185B";
+const CLEAVAGE_LABEL_SIZE: f64 = 17.0;
+/// Half the length of a cleavage stroke, clear of the symbols beside the bond.
+const CLEAVAGE_REACH: f64 = 33.0;
+
+fn draw_reducing_end(svg: &mut String, text: &str, root: &LayoutInfo, frame: &Frame, dimmed: bool) {
+    let s = frame.scale;
+    let (x1, y1) = frame.at(root);
+    let (x2, y2) = frame.offset(root, -REDUCING_END_STUB * s, 0.0);
+    if dimmed {
+        svg.push_str("<g class=\"motif-dimmed\">\n");
+    }
+    svg.push_str(&format!(
+        "<line x1=\"{x1}\" y1=\"{y1}\" x2=\"{x2}\" y2=\"{y2}\" class=\"bond\"/>\n"
+    ));
+    let (reach, anchor) = match frame.orientation {
+        Orientation::RootRight => (8.0, "start"),
+        Orientation::RootLeft => (8.0, "end"),
+        Orientation::RootBottom | Orientation::RootTop => (8.0 + LABEL_SIZE / 2.0, "middle"),
+    };
+    let (x, y) = frame.offset(root, -(REDUCING_END_STUB + reach) * s, 0.0);
+    svg.push_str(&format!(
+        "<text x=\"{x}\" y=\"{y}\" class=\"reducing-end\" style=\"text-anchor: {anchor}\" data-reducing-end=\"true\">{}</text>\n",
+        escape_xml_text(text)
+    ));
+    if dimmed {
+        svg.push_str("</g>\n");
+    }
+}
+
+/// A repeat unit as the layout positions its bracket is drawn around.
+#[derive(Debug, Clone)]
+struct RepeatBracket {
+    near: f64,
+    far: f64,
+    top: f64,
+    bottom: f64,
+    count: String,
+}
+
+fn repeat_count_label(count: &RepeatCount) -> String {
+    match count {
+        RepeatCount::Unknown
+        | RepeatCount::Range {
+            min: None,
+            max: None,
+        } => "n".into(),
+        RepeatCount::Exact(count) => format!("n = {count}"),
+        RepeatCount::Range {
+            min: Some(min),
+            max: Some(max),
+        } => format!("n = {min}\u{2013}{max}"),
+        RepeatCount::Range {
+            min: Some(min),
+            max: None,
+        } => format!("n \u{2265} {min}"),
+        RepeatCount::Range {
+            min: None,
+            max: Some(max),
+        } => format!("n \u{2264} {max}"),
+    }
+}
+
+fn repeat_brackets(
+    graph: &ResidueGraph,
+    layout: &HashMap<usize, LayoutInfo>,
+) -> Vec<RepeatBracket> {
+    graph
+        .inner()
+        .edge_references()
+        .filter_map(|edge| {
+            let count = edge.weight().repeat.as_ref()?;
+            let unit = graph.repeat_unit(edge.id());
+            let positions = unit
+                .iter()
+                .filter_map(|node| layout.get(node))
+                .collect::<Vec<_>>();
+            let bound = |value: fn(&LayoutInfo) -> f64, start: f64, pick: fn(f64, f64) -> f64| {
+                positions
+                    .iter()
+                    .map(|position| value(position))
+                    .fold(start, pick)
+            };
+            (!positions.is_empty()).then(|| RepeatBracket {
+                near: bound(|p| p.x, f64::MAX, f64::min),
+                far: bound(|p| p.x, f64::MIN, f64::max),
+                top: bound(|p| p.y, f64::MAX, f64::min),
+                bottom: bound(|p| p.y, f64::MIN, f64::max),
+                count: repeat_count_label(count),
+            })
+        })
+        .collect()
+}
+
+fn path_through(points: &[(f64, f64)]) -> String {
+    points
+        .iter()
+        .enumerate()
+        .map(|(index, (x, y))| format!("{}{x} {y}", if index == 0 { "M" } else { "L" }))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn draw_repeat_bracket(svg: &mut String, repeat: &RepeatBracket, frame: &Frame, dimmed: bool) {
+    let s = frame.scale;
+    // Halfway to the neighbouring residue, clear of the largest symbols.
+    let gap = (0.4 * frame.depth_step * s).max(33.0 * s);
+    let reach = NODE_R * 1.2 * s + 8.0 * s;
+    let tick = 12.0 * s;
+    let near = LayoutInfo {
+        x: repeat.near,
+        y: repeat.top,
+    };
+    let far = LayoutInfo {
+        x: repeat.far,
+        y: repeat.top,
+    };
+    let span = (repeat.bottom - repeat.top) * frame.lane_scale;
+    if dimmed {
+        svg.push_str("<g class=\"motif-dimmed\">\n");
+    }
+    for (anchor, depth, inward) in [(&near, -gap, tick), (&far, gap, -tick)] {
+        let corners = [
+            frame.offset(anchor, depth + inward, -reach),
+            frame.offset(anchor, depth, -reach),
+            frame.offset(anchor, depth, span + reach),
+            frame.offset(anchor, depth + inward, span + reach),
+        ];
+        svg.push_str(&format!(
+            "<path d=\"{}\" class=\"bracket\" stroke=\"#000000\"/>\n",
+            path_through(&corners)
+        ));
+    }
+    let (x, y) = if frame.orientation.is_vertical() {
+        frame.offset(&near, -gap - 18.0 * s, span / 2.0)
+    } else {
+        frame.offset(&near, -gap, span + reach + 15.0 * s)
+    };
+    svg.push_str(&format!(
+        "<text x=\"{x}\" y=\"{y}\" class=\"repeat-count\">{}</text>\n",
+        escape_xml_text(&repeat.count)
+    ));
+    if dimmed {
+        svg.push_str("</g>\n");
+    }
+}
+
+fn draw_floating_band(
+    svg: &mut String,
+    band: &FloatingBand,
+    graph: &ResidueGraph,
+    layout: &HashMap<usize, LayoutInfo>,
+    frame: &Frame,
+    linkage_text: bool,
+    dimmed: bool,
+) {
+    let s = frame.scale;
+    let inner = graph.inner();
+    let point = |depth: f64, lane: f64| LayoutInfo { x: depth, y: lane };
+    svg.push_str(if dimmed {
+        "<g class=\"motif-dimmed\" data-floating-band=\"true\">\n"
+    } else {
+        "<g data-floating-band=\"true\">\n"
+    });
+
+    // The bracket spans the candidate parents with a tick above each of them.
+    let (first, last) = (band.depths.first(), band.depths.last());
+    let (from, to) = match (first, last) {
+        (Some(first), Some(last)) if first != last => (*first, *last),
+        _ => (band.stem - 0.3, band.stem + 0.3),
+    };
+    let mut bracket = path_through(&[
+        frame.at(&point(from, band.lane)),
+        frame.at(&point(to, band.lane)),
+    ]);
+    let tick = 12.0 * s;
+    let mut ticks = band.depths.clone();
+    if band.depths.len() < 2 {
+        ticks = vec![from, to];
+    }
+    for depth in ticks {
+        bracket.push(' ');
+        bracket.push_str(&path_through(&[
+            frame.at(&point(depth, band.lane)),
+            frame.offset(&point(depth, band.lane), 0.0, tick),
+        ]));
+    }
+    svg.push_str(&format!(
+        "<path d=\"{bracket}\" class=\"bracket\" stroke=\"#000000\"/>\n"
+    ));
+
+    let lane_of = |item: &FloatingItem| match item {
+        FloatingItem::Fragment(child) => layout.get(child).map_or(band.lane, |li| li.y),
+        FloatingItem::Substituent(_, lane) => *lane,
+    };
+    let highest = band.items.iter().map(lane_of).fold(band.lane, f64::min);
+    let (x1, y1) = frame.at(&point(band.stem, band.lane));
+    let (x2, y2) = frame.at(&point(band.stem, highest));
+    svg.push_str(&format!(
+        "<line x1=\"{x1}\" y1=\"{y1}\" x2=\"{x2}\" y2=\"{y2}\" class=\"uncertain\"/>\n"
+    ));
+
+    for item in &band.items {
+        let lane = lane_of(item);
+        let stem_point = frame.at(&point(band.stem, lane));
+        match item {
+            FloatingItem::Fragment(child) => {
+                let reach = layout.get(child).map_or(band.stem, |li| li.x);
+                let (cx, cy) = frame.at(&point(reach, lane));
+                svg.push_str(&format!(
+                    "<line x1=\"{}\" y1=\"{}\" x2=\"{cx}\" y2=\"{cy}\" class=\"uncertain\"/>\n",
+                    stem_point.0, stem_point.1
+                ));
+                if linkage_text {
+                    let residue = &inner[NodeIndex::new(*child)];
+                    let anomer = anomer_char(residue.anomeric_symbol, &residue.anomeric_prefix);
+                    let (lx, ly) = frame.at(&point(band.stem + 0.5 * (reach - band.stem), lane));
+                    draw_bond_label(
+                        svg,
+                        frame.orientation,
+                        stem_point.0,
+                        stem_point.1,
+                        lx,
+                        ly,
+                        &format!("{anomer} ?"),
+                        s,
+                    );
+                }
+            }
+            FloatingItem::Substituent(map_code, _) => {
+                let (cx, cy) = frame.at(&point(band.stem + FLOATING_REACH, lane));
+                svg.push_str(&format!(
+                    "<line x1=\"{}\" y1=\"{}\" x2=\"{cx}\" y2=\"{cy}\" class=\"uncertain\"/>\n",
+                    stem_point.0, stem_point.1
+                ));
+                let label = map_modification_label(map_code).unwrap_or("Sub");
+                svg.push_str(&format!(
+                    r##"<rect x="{}" y="{}" width="{}" height="{}" rx="{}" fill="#fff"/>
+<text x="{cx}" y="{cy}" class="link" data-undefined-modification="true">{{{label}?}}</text>
+"##,
+                    cx - 42.0 * s,
+                    cy - 18.0 * s,
+                    84.0 * s,
+                    36.0 * s,
+                    6.0 * s,
+                ));
+            }
+        }
+    }
+    svg.push_str("</g>\n");
+}
+
+/// A cleavage drawn across a bond: a stroke with a hook turned towards the
+/// fragment that is kept, and the ion label past the end of the stroke.
+fn draw_cleavage(
+    svg: &mut String,
+    mark: &CleavageMark,
+    parent: (f64, f64),
+    child: (f64, f64),
+    linkage_text: bool,
+    scale: f64,
+) {
+    let (dx, dy) = (child.0 - parent.0, child.1 - parent.1);
+    let length = (dx * dx + dy * dy).sqrt();
+    if length < 1.0 {
+        return;
+    }
+    let along = (dx / length, dy / length);
+    // Past the linkage text, which sits at the middle of the bond.
+    let share = if linkage_text { 0.68 } else { 0.5 };
+    let (cx, cy) = (parent.0 + dx * share, parent.1 + dy * share);
+    // Across the bond, upwards or (on an upright bond) to the left.
+    let mut across = (-along.1, along.0);
+    if across.1 > 0.0 || (across.1 == 0.0 && across.0 > 0.0) {
+        across = (-across.0, -across.1);
+    }
+    // The two sides hook at opposite ends, so a B and a Y on one bond read
+    // as the usual pair.
+    let (side, kept) = match mark.side {
+        CleavageSide::NonReducing => ("non-reducing", 1.0),
+        CleavageSide::Reducing => ("reducing", -1.0),
+    };
+    let across = (across.0 * kept, across.1 * kept);
+    let reach = CLEAVAGE_REACH * scale;
+    let hook = 12.0 * scale * kept;
+    let end = (cx + across.0 * reach, cy + across.1 * reach);
+    let points = [
+        (cx - across.0 * reach, cy - across.1 * reach),
+        end,
+        (end.0 + along.0 * hook, end.1 + along.1 * hook),
+    ];
+    let (label_x, label_y) = (
+        end.0 + across.0 * 14.0 * scale,
+        end.1 + across.1 * 14.0 * scale,
+    );
+    let anchor = if across.0.abs() > 0.5 {
+        if across.0 > 0.0 { "start" } else { "end" }
+    } else {
+        "middle"
+    };
+    svg.push_str(&format!(
+        "<g data-cleavage=\"{}\" data-kept=\"{side}\">\n<path d=\"{}\" class=\"cleavage\"/>\n<text x=\"{label_x}\" y=\"{label_y}\" class=\"cleavage-label\" style=\"text-anchor: {anchor}\">{}</text>\n</g>\n",
+        mark.edge,
+        path_through(&points),
+        escape_xml_text(&mark.label)
+    ));
+}
+
+/// A bond label. Vertical drawings keep the text of an upright bond readable
+/// and beside the bond instead of turning it with the bond.
+#[allow(clippy::too_many_arguments)]
+fn draw_bond_label(
+    svg: &mut String,
+    orientation: Orientation,
+    px: f64,
+    py: f64,
+    cx: f64,
+    cy: f64,
+    label: &str,
+    scale: f64,
+) {
+    if orientation.is_vertical() && (cx - px).abs() < (cy - py).abs() * 0.6 {
+        svg.push_str(&format!(
+            "<text x=\"{x}\" y=\"{y}\" class=\"link\" style=\"text-anchor: start\">{label}</text>\n",
+            x = (px + cx) / 2.0 + 9.0 * scale,
+            y = (py + cy) / 2.0,
+            label = escape_xml_text(label),
+        ));
+    } else {
+        draw_linkage_text(svg, px, py, cx, cy, label, scale);
+    }
 }
 
 fn draw_linkage_text(
@@ -2751,6 +3756,569 @@ mod tests {
         assert!(exact.contains("data-edge-index=\"0\" class=\"motif-match\""));
         let png = render_png_with_selection(&graph, &selection, &RenderOptions::default()).unwrap();
         assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    }
+
+    const N_GLYCAN: &str = "Gal(b1-4)GlcNAc(b1-2)Man(a1-3)[GlcNAc(b1-2)Man(a1-6)]Man(b1-4)GlcNAc(b1-4)[Fuc(a1-6)]GlcNAc";
+    const REPEAT: &str = "WURCS=2.0/4,5,5/[a2112h-1b_1-5_2*NCC/3=O][a2122A-1b_1-5][a2112h-1a_1-5][a2122h-1b_1-5]/1-2-1-3-4/a3-b1_b4-c1_c4-d1_d3-e1_a1-e4~2-5";
+    const FRAGMENT: &str = "WURCS=2.0/6,11,10/[a2122h-1x_1-5_2*NCC/3=O][a2122h-1b_1-5_2*NCC/3=O][a1122h-1b_1-5][a1122h-1a_1-5][a2112h-1b_1-5][a1221m-1a_1-5]/1-2-3-4-2-5-4-2-6-2-5/a4-b1_a6-i1_b4-c1_c3-d1_c6-g1_d2-e1_e4-f1_g2-h1_j4-k1_j1-d4|d6|g4|g6}";
+    const SUBSTITUENT: &str = "WURCS=2.0/2,2,1/[u2122h][u2112h]/1-2/a?|b?}*OCC/3=O";
+
+    fn iupac(value: &str) -> ResidueGraph {
+        crabwurcs_iupac::parse_iupac_condensed(value).unwrap()
+    }
+
+    fn with_orientation(orientation: Orientation) -> RenderOptions {
+        RenderOptions {
+            orientation,
+            ..RenderOptions::default()
+        }
+    }
+
+    /// Every number of the attributes in `names`, across the drawing.
+    fn attributes(svg: &str, names: &[&str]) -> Vec<f64> {
+        let mut values = Vec::new();
+        for name in names {
+            let pattern = format!(" {name}=\"");
+            let mut rest = svg;
+            while let Some(start) = rest.find(&pattern) {
+                rest = &rest[start + pattern.len()..];
+                let end = rest.find('"').unwrap();
+                values.push(rest[..end].parse::<f64>().unwrap());
+            }
+        }
+        values
+    }
+
+    fn canvas_size(svg: &str) -> (f64, f64) {
+        let header = &svg[..svg.find('>').unwrap()];
+        (
+            attributes(header, &["width"])[0],
+            attributes(header, &["height"])[0],
+        )
+    }
+
+    /// Whether everything is placed on the canvas. Path corners count too.
+    fn assert_on_canvas(svg: &str, context: &str) {
+        let (width, height) = canvas_size(svg);
+        let body = &svg[svg.find("</style>").unwrap()..];
+        for x in attributes(body, &["cx", "x1", "x2"]) {
+            assert!((0.0..=width).contains(&x), "x {x} of {width}: {context}");
+        }
+        for y in attributes(body, &["cy", "y1", "y2"]) {
+            assert!((0.0..=height).contains(&y), "y {y} of {height}: {context}");
+        }
+        let mut rest = body;
+        while let Some(start) = rest.find(" d=\"") {
+            rest = &rest[start + 4..];
+            let end = rest.find('"').unwrap();
+            let numbers = rest[..end]
+                .split([' ', 'M', 'L'])
+                .filter(|part| !part.is_empty())
+                .map(|part| part.parse::<f64>().unwrap())
+                .collect::<Vec<_>>();
+            for point in numbers.chunks(2) {
+                assert!((0.0..=width).contains(&point[0]), "path x: {context}");
+                assert!((0.0..=height).contains(&point[1]), "path y: {context}");
+            }
+        }
+    }
+
+    /// `(x, y)` of the first `<circle>` and the first `<rect>`.
+    fn circle_and_square(svg: &str) -> ((f64, f64), (f64, f64)) {
+        let circle = &svg[svg.find("<circle").unwrap()..];
+        let circle = &circle[..circle.find("/>").unwrap()];
+        let square = &svg[svg.find("<rect").unwrap()..];
+        let square = &square[..square.find("/>").unwrap()];
+        let size = attributes(square, &["width"])[0] / 2.0;
+        (
+            (
+                attributes(circle, &["cx"])[0],
+                attributes(circle, &["cy"])[0],
+            ),
+            (
+                attributes(square, &["x"])[0] + size,
+                attributes(square, &["y"])[0] + size,
+            ),
+        )
+    }
+
+    #[test]
+    fn orientations_put_the_reducing_end_where_they_say() {
+        // The GlcNAc square is the reducing end, the Gal circle the child.
+        let graph = iupac("Gal(b1-4)GlcNAc");
+        for (orientation, dx, dy) in [
+            (Orientation::RootRight, -100.0, 0.0),
+            (Orientation::RootLeft, 100.0, 0.0),
+            (Orientation::RootBottom, 0.0, -100.0),
+            (Orientation::RootTop, 0.0, 100.0),
+        ] {
+            let svg = render_svg_with_options(&graph, &with_orientation(orientation)).unwrap();
+            let (gal, glcnac) = circle_and_square(&svg);
+            assert_eq!(gal.0 - glcnac.0, dx, "{orientation:?}");
+            assert_eq!(gal.1 - glcnac.1, dy, "{orientation:?}");
+        }
+    }
+
+    #[test]
+    fn the_right_to_left_orientation_is_the_default_drawing() {
+        let graph = iupac(N_GLYCAN);
+        assert_eq!(
+            render_svg(&graph).unwrap(),
+            render_svg_with_options(&graph, &with_orientation(Orientation::RootRight)).unwrap()
+        );
+    }
+
+    #[test]
+    fn the_higher_acceptor_arm_stays_above_or_to_the_right() {
+        // Lanes come from the layout, whatever the orientation. Compare the
+        // canvas positions of the two Man arms of the core.
+        let graph = iupac("Man(a1-3)[Man(a1-6)]Man");
+        let arms = |orientation| {
+            let svg = render_svg_with_options(&graph, &with_orientation(orientation)).unwrap();
+            let body = &svg[svg.find("</style>").unwrap()..];
+            let xs = attributes(body, &["cx"]);
+            let ys = attributes(body, &["cy"]);
+            // Node order: core (root), then the arms as parsed: α6, α3.
+            ((xs[1], ys[1]), (xs[2], ys[2]))
+        };
+        let (alpha6, alpha3) = arms(Orientation::RootRight);
+        assert!(alpha6.1 < alpha3.1, "α6 above α3 in the default drawing");
+        let (alpha6, alpha3) = arms(Orientation::RootLeft);
+        assert!(alpha6.1 < alpha3.1, "α6 above α3 when mirrored");
+        for orientation in [Orientation::RootBottom, Orientation::RootTop] {
+            let (alpha6, alpha3) = arms(orientation);
+            assert!(alpha6.0 > alpha3.0, "α6 right of α3: {orientation:?}");
+        }
+    }
+
+    #[test]
+    fn orientations_parse_their_names_and_the_common_spellings() {
+        for orientation in [
+            Orientation::RootRight,
+            Orientation::RootLeft,
+            Orientation::RootBottom,
+            Orientation::RootTop,
+        ] {
+            assert_eq!(orientation.as_str().parse(), Ok(orientation));
+        }
+        assert_eq!("top-down".parse(), Ok(Orientation::RootTop));
+        assert_eq!("left_to_right".parse(), Ok(Orientation::RootLeft));
+        assert_eq!("VERTICAL".parse(), Ok(Orientation::RootBottom));
+        assert!("diagonal".parse::<Orientation>().is_err());
+    }
+
+    #[test]
+    fn every_corpus_glycan_stays_on_the_canvas_in_every_layout() {
+        let corpus = include_str!("../data/glycoshape_notations.tsv")
+            .lines()
+            .chain(include_str!("../data/glycoshape_derived_notations.tsv").lines());
+        for line in corpus {
+            let wurcs = line.split('\t').next().unwrap();
+            let graph = parse_wurcs(wurcs).unwrap();
+            for orientation in [
+                Orientation::RootRight,
+                Orientation::RootLeft,
+                Orientation::RootBottom,
+                Orientation::RootTop,
+            ] {
+                for compact in [false, true] {
+                    let opts = RenderOptions {
+                        orientation,
+                        compact,
+                        reducing_end: Some("Ser/Thr".into()),
+                        repeat_brackets: true,
+                        floating_fragments: true,
+                        ..RenderOptions::default()
+                    };
+                    let svg = render_svg_with_options(&graph, &opts).unwrap();
+                    assert_on_canvas(&svg, &format!("{wurcs} {orientation:?} {compact}"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compact_drawings_are_smaller_and_carry_no_linkage_text() {
+        let graph = iupac(N_GLYCAN);
+        let full = render_svg(&graph).unwrap();
+        let opts = RenderOptions {
+            compact: true,
+            ..RenderOptions::default()
+        };
+        let compact = render_svg_with_options(&graph, &opts).unwrap();
+        let (full_w, full_h) = canvas_size(&full);
+        let (compact_w, compact_h) = canvas_size(&compact);
+        assert!(compact_w < full_w && compact_h < full_h);
+        assert!(full.contains("class=\"link\""));
+        assert!(!compact.contains("class=\"link\""));
+        assert_on_canvas(&compact, "compact N-glycan");
+
+        // Labels above and below a symbol keep their room.
+        let sulfated = parse(
+            "WURCS=2.0/2,2,1/[u2122h_2*NSO/3=O/3=O_6*OSO/3=O/3=O][a2121A-1a_1-5_2*OSO/3=O/3=O]/1-2/a4-b1",
+        );
+        let svg = render_svg_with_options(&sulfated, &opts).unwrap();
+        let body = &svg[svg.find("</style>").unwrap()..];
+        let lowest = attributes(body, &["y"])
+            .into_iter()
+            .fold(f64::MIN, f64::max);
+        assert!(lowest + LABEL_SIZE / 2.0 <= canvas_size(&svg).1);
+    }
+
+    #[test]
+    fn the_reducing_end_label_widens_the_canvas_and_is_escaped() {
+        let graph = iupac("Gal(b1-4)GlcNAc");
+        let plain = canvas_size(&render_svg(&graph).unwrap());
+        for (orientation, grows_width) in [
+            (Orientation::RootRight, true),
+            (Orientation::RootLeft, true),
+            (Orientation::RootBottom, false),
+            (Orientation::RootTop, false),
+        ] {
+            let opts = RenderOptions {
+                orientation,
+                reducing_end: Some("Ser<Thr>".into()),
+                ..RenderOptions::default()
+            };
+            let svg = render_svg_with_options(&graph, &opts).unwrap();
+            assert!(svg.contains(">Ser&lt;Thr&gt;</text>"), "{orientation:?}");
+            assert!(svg.contains("data-reducing-end=\"true\""));
+            assert_on_canvas(&svg, "reducing end");
+            let (width, height) = canvas_size(&svg);
+            if grows_width {
+                assert!(width > plain.0, "{orientation:?}");
+            } else {
+                // A vertical drawing is as tall as a horizontal one is wide.
+                assert!(height > plain.0, "{orientation:?}");
+            }
+        }
+
+        // A blank label draws nothing.
+        let blank = RenderOptions {
+            reducing_end: Some("  ".into()),
+            ..RenderOptions::default()
+        };
+        assert_eq!(
+            render_svg_with_options(&graph, &blank).unwrap(),
+            render_svg(&graph).unwrap()
+        );
+    }
+
+    #[test]
+    fn the_reducing_end_label_dims_with_its_residue() {
+        let graph = iupac("Gal(b1-4)GlcNAc");
+        let opts = RenderOptions {
+            reducing_end: Some("Asn".into()),
+            ..RenderOptions::default()
+        };
+        // GlcNAc, the reducing end, is node 0 and Gal node 1.
+        let group = "<g class=\"motif-dimmed\">
+<line";
+        let outside = HighlightSelection::from_residues(&graph, [1]).unwrap();
+        let inside = HighlightSelection::from_residues(&graph, [0]).unwrap();
+        let dimmed = render_svg_with_selection(&graph, &outside, &opts).unwrap();
+        let kept = render_svg_with_selection(&graph, &inside, &opts).unwrap();
+        assert!(dimmed.contains(group), "{dimmed}");
+        assert!(!kept.contains(group), "{kept}");
+    }
+
+    #[test]
+    fn repeat_brackets_replace_the_closing_bond_and_state_the_count() {
+        let graph = parse(REPEAT);
+        let plain = render_svg(&graph).unwrap();
+        assert!(!plain.contains("class=\"bracket\""));
+        assert_eq!(plain.matches("class=\"uncertain\"").count(), 1);
+
+        let opts = RenderOptions {
+            repeat_brackets: true,
+            ..RenderOptions::default()
+        };
+        let svg = render_svg_with_options(&graph, &opts).unwrap();
+        assert_eq!(svg.matches("class=\"bracket\"").count(), 2);
+        assert_eq!(svg.matches("class=\"uncertain\"").count(), 0);
+        assert!(svg.contains(">n = 2\u{2013}5</text>"), "{svg}");
+        assert_eq!(svg.matches("class=\"bond\"").count(), 4);
+        for orientation in [
+            Orientation::RootLeft,
+            Orientation::RootBottom,
+            Orientation::RootTop,
+        ] {
+            let opts = RenderOptions {
+                orientation,
+                ..opts.clone()
+            };
+            assert_on_canvas(
+                &render_svg_with_options(&graph, &opts).unwrap(),
+                "repeat bracket",
+            );
+        }
+
+        for (count, label) in [
+            (RepeatCount::Unknown, "n"),
+            (RepeatCount::Exact(3), "n = 3"),
+            (
+                RepeatCount::Range {
+                    min: Some(2),
+                    max: Some(5),
+                },
+                "n = 2\u{2013}5",
+            ),
+            (
+                RepeatCount::Range {
+                    min: Some(2),
+                    max: None,
+                },
+                "n \u{2265} 2",
+            ),
+            (
+                RepeatCount::Range {
+                    min: None,
+                    max: Some(5),
+                },
+                "n \u{2264} 5",
+            ),
+            (
+                RepeatCount::Range {
+                    min: None,
+                    max: None,
+                },
+                "n",
+            ),
+        ] {
+            assert_eq!(repeat_count_label(&count), label);
+        }
+    }
+
+    #[test]
+    fn a_repeat_bracket_leaves_a_cap_outside() {
+        // Gal(b1-3)[GlcNAc(b1-4)Gal(b1-3)]nGalNAc: the Gal cap is outside.
+        let mut graph = iupac("Gal(b1-3)GlcNAc(b1-4)Gal(b1-3)GalNAc");
+        let mut closure = crabwurcs_core::Linkage::new(
+            crabwurcs_core::CarbonPosition(3),
+            crabwurcs_core::CarbonPosition(1),
+        );
+        closure.repeat = Some(RepeatCount::Exact(2));
+        // Nodes from the reducing end: GalNAc 0, Gal 1, GlcNAc 2, Gal 3.
+        graph.add_linkage(NodeIndex::new(2), NodeIndex::new(1), closure);
+        let edge = graph
+            .inner()
+            .edge_references()
+            .find(|edge| edge.weight().repeat.is_some())
+            .unwrap()
+            .id();
+        assert_eq!(graph.repeat_unit(edge), BTreeSet::from([1, 2]));
+
+        let layout = compute_layout(&graph, graph.root().unwrap());
+        let [bracket] = repeat_brackets(&graph, &layout).try_into().unwrap();
+        assert_eq!((bracket.near, bracket.far), (1.0, 2.0));
+    }
+
+    #[test]
+    fn undefined_fragments_float_over_a_bracket_when_asked() {
+        let graph = parse(FRAGMENT);
+        let opts = RenderOptions {
+            floating_fragments: true,
+            show_labels: true,
+            ..RenderOptions::default()
+        };
+        let svg = render_svg_with_options(&graph, &opts).unwrap();
+        assert_eq!(svg.matches("data-floating-band=\"true\"").count(), 1);
+        assert_eq!(svg.matches("class=\"bracket\"").count(), 1);
+        assert_eq!(svg.matches("class=\"res-label\"").count(), 11);
+        assert!(svg.contains(">\u{03B2} ?</text>"), "{svg}");
+        // The stem and one stub: no dashed line reaches a candidate parent.
+        assert_eq!(svg.matches("class=\"uncertain\"").count(), 2);
+        assert_on_canvas(&svg, "floating fragment");
+
+        let (layout, bands) = compute_floating_layout(&graph, graph.root().unwrap());
+        assert_eq!(layout.len(), graph.node_count());
+        let [band] = bands.try_into().unwrap();
+        let main_top = graph
+            .subtree(graph.root().unwrap())
+            .iter()
+            .map(|node| layout[node].y)
+            .fold(f64::MAX, f64::min);
+        assert!(band.lane < main_top, "bracket above the main structure");
+        for node in graph.subtree(NodeIndex::new(9)) {
+            assert!(layout[&node].y < band.lane, "fragment above its bracket");
+        }
+    }
+
+    #[test]
+    fn floating_substituents_join_the_band_of_their_candidates() {
+        let graph = parse(SUBSTITUENT);
+        let opts = RenderOptions {
+            floating_fragments: true,
+            ..RenderOptions::default()
+        };
+        let svg = render_svg_with_options(&graph, &opts).unwrap();
+        assert_eq!(svg.matches("{Ac?}").count(), 1);
+        assert_eq!(svg.matches("class=\"bracket\"").count(), 1);
+        assert_on_canvas(&svg, "floating substituent");
+        // The label's box stays on the canvas too, however tight the margins.
+        for compact in [false, true] {
+            let opts = RenderOptions {
+                compact,
+                ..opts.clone()
+            };
+            let svg = render_svg_with_options(&graph, &opts).unwrap();
+            let body = &svg[svg.find("</style>").unwrap()..];
+            assert!(attributes(body, &["x"]).into_iter().all(|x| x >= 0.0));
+            assert!(attributes(body, &["y"]).into_iter().all(|y| y >= 0.0));
+        }
+    }
+
+    #[test]
+    fn a_glycan_with_nothing_undefined_ignores_the_floating_option() {
+        let graph = iupac(N_GLYCAN);
+        let opts = RenderOptions {
+            floating_fragments: true,
+            repeat_brackets: true,
+            ..RenderOptions::default()
+        };
+        assert_eq!(
+            render_svg_with_options(&graph, &opts).unwrap(),
+            render_svg(&graph).unwrap()
+        );
+    }
+
+    #[test]
+    fn highlight_selections_build_from_residues_and_matches() {
+        let graph = iupac("Fuc(a1-3)GlcNAc(b1-4)GlcNAc");
+        let selection = HighlightSelection::from_residues(&graph, [0, 1]).unwrap();
+        assert_eq!(selection.node_indices, BTreeSet::from([0, 1]));
+        assert_eq!(selection.edge_indices.len(), 1);
+
+        // Residues that are not bonded select no bond.
+        let apart = HighlightSelection::from_residues(&graph, [0, 2]).unwrap();
+        assert!(apart.edge_indices.is_empty());
+
+        assert!(matches!(
+            HighlightSelection::from_residues(&graph, [3]),
+            Err(SnfgError::InvalidResidueIndex { index: 3, count: 3 })
+        ));
+
+        let motif = iupac("Fuc(a1-?)GlcNAc");
+        let matches = find_motif_matches(&graph, &motif).unwrap();
+        let from_matches = HighlightSelection::from_matches(&matches);
+        assert_eq!(from_matches.node_indices.len(), 2);
+        assert_eq!(
+            render_svg_with_selection(&graph, &from_matches, &RenderOptions::default()).unwrap(),
+            render_svg_with_motifs(&graph, &[motif], &RenderOptions::default()).unwrap()
+        );
+    }
+
+    #[test]
+    fn cleavage_marks_hook_towards_the_kept_fragment() {
+        let graph = iupac("Gal(b1-4)GlcNAc");
+        let mark = |side, label: &str| CleavageMark {
+            edge: 0,
+            side,
+            label: label.into(),
+        };
+        let opts = RenderOptions {
+            cleavages: vec![
+                mark(CleavageSide::NonReducing, "B1"),
+                mark(CleavageSide::Reducing, "Y1"),
+            ],
+            ..RenderOptions::default()
+        };
+        let svg = render_svg_with_options(&graph, &opts).unwrap();
+        assert_eq!(svg.matches("class=\"cleavage\"").count(), 2);
+        assert!(svg.contains(">B1</text>") && svg.contains(">Y1</text>"));
+        assert!(svg.contains("data-kept=\"non-reducing\""));
+        assert!(svg.contains("data-kept=\"reducing\""));
+        for orientation in [Orientation::RootBottom, Orientation::RootTop] {
+            let opts = RenderOptions {
+                orientation,
+                compact: true,
+                ..opts.clone()
+            };
+            let svg = render_svg_with_options(&graph, &opts).unwrap();
+            assert_on_canvas(&svg, "cleavage");
+            let body = &svg[svg.find("</style>").unwrap()..];
+            let width = canvas_size(&svg).0;
+            // Labels start or end at x; the room for them was reserved.
+            for x in attributes(body, &["x"]) {
+                let room = x.min(width - x);
+                assert!(room >= CLEAVAGE_LABEL_SIZE, "label at {x} of {width}");
+            }
+        }
+
+        let bad = RenderOptions {
+            cleavages: vec![CleavageMark {
+                edge: 7,
+                side: CleavageSide::Reducing,
+                label: "Y1".into(),
+            }],
+            ..RenderOptions::default()
+        };
+        assert!(matches!(
+            render_svg_with_options(&graph, &bad),
+            Err(SnfgError::InvalidBondIndex { index: 7, count: 1 })
+        ));
+    }
+
+    #[test]
+    fn a_grid_lays_cells_out_in_rows_with_unique_ids_and_captions() {
+        let graphs = [
+            iupac("Gal(b1-4)GlcNAc"),
+            iupac(N_GLYCAN),
+            iupac("Glc"),
+            iupac("Man(a1-3)Man"),
+            iupac("Gal"),
+        ];
+        let options = GridOptions {
+            columns: 2,
+            labels: vec!["LacNAc".into(), String::new(), "<Glc>".into()],
+            ..GridOptions::default()
+        };
+        let svg = render_grid_svg(&graphs, &options).unwrap();
+        assert_eq!(svg.matches("<svg ").count(), 6);
+        assert_eq!(svg.matches("class=\"grid-label\"").count(), 2);
+        assert!(svg.contains(">&lt;Glc&gt;</text>"));
+        for index in 0..5 {
+            assert_eq!(
+                svg.matches(&format!("id=\"snfg-title-{index}\"")).count(),
+                1,
+                "{index}"
+            );
+        }
+        assert!(!svg.contains("id=\"snfg-title\""));
+
+        // Every cell sits inside the canvas, in its own slot.
+        let (width, height) = canvas_size(&svg);
+        let mut placed = Vec::new();
+        for (index, cell) in svg.split("<svg x=\"").skip(1).enumerate() {
+            let cell = format!(" x=\"{cell}");
+            let header = &cell[..cell.find('>').unwrap()];
+            let (x, y) = (attributes(header, &["x"])[0], attributes(header, &["y"])[0]);
+            let (w, h) = (
+                attributes(header, &["width"])[0],
+                attributes(header, &["height"])[0],
+            );
+            assert!(x >= 0.0 && x + w <= width, "cell {index}");
+            assert!(y >= 0.0 && y + h <= height, "cell {index}");
+            placed.push((x, y, w, h));
+        }
+        for (first, a) in placed.iter().enumerate() {
+            for b in &placed[first + 1..] {
+                let apart =
+                    a.0 + a.2 <= b.0 || b.0 + b.2 <= a.0 || a.1 + a.3 <= b.1 || b.1 + b.3 <= a.1;
+                assert!(apart, "{a:?} and {b:?} overlap");
+            }
+        }
+
+        let png = render_grid_png(&graphs, &options).unwrap();
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+        let empty = render_grid_svg(&[], &GridOptions::default()).unwrap();
+        assert!(empty.contains("<svg"));
+        let no_columns = GridOptions {
+            columns: 0,
+            ..GridOptions::default()
+        };
+        let single = render_grid_svg(&graphs[..1], &no_columns).unwrap();
+        assert_eq!(single.matches("<svg ").count(), 2);
     }
 
     #[test]

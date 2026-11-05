@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="snfg-title snfg-desc" viewBox="0 0 340 140" width="340" height="140">
+<title id="snfg-title">SNFG glycan: Gal(b1-4)GlcNAc(b1-2)Man</title>
+<desc id="snfg-desc">Canonical IUPAC condensed: Gal(b1-4)GlcNAc(b1-2)Man. Canonical WURCS: WURCS=2.0/3,3,2/[u1122h][a2122h-1b_1-5_2*NCC/3=O][a2112h-1b_1-5]/1-2-3/a2-b1_b4-c1.</desc>
+<metadata id="crabwurcs-notations">
+<crabwurcs:notations xmlns:crabwurcs="https://github.com/Ojas-Singh/crabWURCS/ns/metadata/1">
+    <crabwurcs:iupac-condensed canonical="true" available="true">Gal(b1-4)GlcNAc(b1-2)Man</crabwurcs:iupac-condensed>
+    <crabwurcs:wurcs canonical="true" available="true">WURCS=2.0/3,3,2/[u1122h][a2122h-1b_1-5_2*NCC/3=O][a2112h-1b_1-5]/1-2-3/a2-b1_b4-c1</crabwurcs:wurcs>
+    <crabwurcs:source format="iupac-condensed">Gal(b1-4)GlcNAc(b1-2)Man</crabwurcs:source>
+  </crabwurcs:notations>
+</metadata>
+<style>
+  .bond { stroke: #000; stroke-width: 4; fill: none; stroke-linecap: round; }
+  .uncertain { stroke: #555; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-dasharray: 8 7; }
+  .link { font-family: Arial, Helvetica, sans-serif; font-size: 20px; fill: #000; text-anchor: middle; dominant-baseline: central; }
+  .mod-label { font-family: Arial, Helvetica, sans-serif; font-size: 20px; fill: #000; text-anchor: middle; dominant-baseline: central; }
+  .node { fill: none; }
+  .res-label { font-family: Arial, Helvetica, sans-serif; font-size: 11px; fill: #000; text-anchor: middle; dominant-baseline: central; }
+  .cleavage { fill: none; stroke: #C2185B; stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+  .cleavage-label { font-family: Arial, Helvetica, sans-serif; font-size: 17px; fill: #C2185B; dominant-baseline: central; }
+</style>
+<line x1="270" y1="70" x2="170" y2="70" class="bond"/>
+<text x="0" y="0" class="link" transform="translate(220,56) rotate(0)">β 2</text>
+<line x1="170" y1="70" x2="70" y2="70" class="bond"/>
+<text x="0" y="0" class="link" transform="translate(120,56) rotate(0)">β 4</text>
+<g data-cleavage="1" data-kept="non-reducing">
+<path d="M102 103 L102 37 L90 37" class="cleavage"/>
+<text x="102" y="23" class="cleavage-label" style="text-anchor: middle">B1</text>
+</g>
+<g data-cleavage="1" data-kept="reducing">
+<path d="M102 37 L102 103 L114 103" class="cleavage"/>
+<text x="102" y="117" class="cleavage-label" style="text-anchor: middle">Y2</text>
+</g>
+<circle cx="270" cy="70" r="25" fill="#00A651" stroke="#000000" stroke-width="2"/>
+<rect x="145" y="45" width="50" height="50" fill="#0072BC" stroke="#000000" stroke-width="2"/>
+<circle cx="70" cy="70" r="25" fill="#FFD400" stroke="#000000" stroke-width="2"/>
+</svg>

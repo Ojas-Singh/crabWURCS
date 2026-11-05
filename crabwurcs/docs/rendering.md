@@ -96,9 +96,74 @@ as a single row of grouped symbols, each with a `×N` count.
 | `font_family` | `Arial, Helvetica, sans-serif` | Font stack for all text. |
 | `scale` | `1.0` | Uniform scale of the whole figure. |
 | `source_notation` | `None` | Records the exact input notation in the SVG metadata. |
+| `orientation` | `RootRight` | Where the reducing end is drawn; see [Orientation](#orientation). |
+| `compact` | `false` | Tighter spacing and no linkage text, for heatmap axes and tables. |
+| `reducing_end` | `None` | Text past the reducing end, such as `Asn`, `Ser/Thr` or `2-AB`. |
+| `repeat_brackets` | `false` | Draw repeat units in brackets with their count. |
+| `floating_fragments` | `false` | Draw undefined fragments above the structure. |
+| `cleavages` | empty | Fragment ions to mark on their bonds. |
+
+Every option is off by default, and a default drawing is the same in every
+release that does not say otherwise. Compositions have no tree, so they ignore
+`orientation`, `compact`, `reducing_end`, and the bracket options.
 
 `Assigned` pentagons always show their first-letter label regardless of
 `show_labels`, because their identity is not recoverable from shape or colour.
+
+## Orientation
+
+[`Orientation`] names where the reducing end sits. The higher acceptor position
+of a branch stays above the lower one in the horizontal drawings and to its
+right in the vertical ones, so an N-glycan's α1-6 arm is drawn above, or to the
+right of, its α1-3 arm.
+
+[`Orientation`]: https://docs.rs/crabwurcs-snfg/latest/crabwurcs_snfg/enum.Orientation.html
+
+| Value | Reducing end | Also accepted |
+|---|---|---|
+| `RootRight` | right (the SNFG convention) | `right-to-left`, `rl`, `horizontal` |
+| `RootLeft` | left | `left-to-right`, `lr` |
+| `RootBottom` | bottom | `bottom-up`, `bt`, `vertical` |
+| `RootTop` | top | `top-down`, `tb` |
+
+Vertical drawings keep the linkage text of upright bonds horizontal, beside the
+bond, and put sulfate labels beside the symbol.
+
+| `RootBottom` with `reducing_end: "Asn"` | `compact` |
+|---|---|
+| ![vertical](img/examples/vertical.svg) | ![compact](img/examples/compact.svg) |
+
+## Uncertainty
+
+Repeat units, and fragments whose attachment is not known, have two drawings.
+The default keeps a dashed bond; `repeat_brackets` and `floating_fragments` use
+the SNFG convention.
+
+| Repeat brackets | Floating fragments |
+|---|---|
+| ![repeat](img/examples/repeat.svg) | ![floating](img/examples/floating.svg) |
+
+A repeat bracket goes around the unit: everything from its reducing-side residue
+to its far end, with side branches, but without a cap beyond that far end. The
+count reads `n`, `n = 3`, `n = 2–5`, `n ≥ 2` or `n ≤ 5`.
+
+Floating fragments are grouped by their candidate parents. Each group sits over
+one bracket that spans its candidates, with a tick above each of them.
+
+## Fragment ions
+
+`cleavages` marks Domon–Costello ions on their bonds, with a stroke across the
+bond that hooks towards the fragment that is kept. `crabwurcs::glycan_fragments`
+lists the ions and `crabwurcs::cleavage_mark` turns one into a mark.
+
+![cleavage](img/examples/cleavage.svg)
+
+## Grids
+
+[`render_grid_svg`] draws many glycans on one canvas, in rows, with optional
+captions. Each cell keeps its own drawing and notations.
+
+[`render_grid_svg`]: https://docs.rs/crabwurcs-snfg/latest/crabwurcs_snfg/fn.render_grid_svg.html
 
 ## Output formats
 

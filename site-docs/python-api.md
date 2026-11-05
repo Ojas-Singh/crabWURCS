@@ -7,8 +7,20 @@
 - `ImageFormat`: `SVG` and `PNG`.
 - `Glycan.parse(value, format=Format.AUTO)` parses a structure.
 - `Glycan.to(format)` returns notation or molecular text.
-- `Glycan.render(format="svg", highlight_motifs=None, motif_format="auto")`
-  returns SVG text or PNG bytes.
+- `Glycan.render(format="svg", highlight_motifs=None, motif_format="auto",
+  ...)` returns SVG text or PNG bytes. See [SNFG rendering](rendering.md) for
+  its other keyword arguments.
+- `Glycan.mass()`, `.formula()`, `.composition()`, `.composition_string()` and
+  `.fragments()` weigh a glycan; see [Mass and fragments](mass.md).
+- `Glycan.contains(motif)`, `.count_motif(motif)` and `.find_motif(motif)` search
+  for a motif, given as a notation, a library name or a `Glycan`. `positions`
+  holds its residues' positions in reading order.
+- `Glycan.motifs()` names the library motifs a glycan holds, and
+  `crabwurcs.named_motifs()` lists the library.
+- `Glycan.residues()` lists residues with their node index, name and parent.
+- `==` and `hash()` compare structures, whatever notation they were read from.
+  A stated anomer or position is more than an open one: `GlcNAc` is not
+  `GlcNAc(b1-`.
 
 ## Convenience functions
 

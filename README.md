@@ -10,8 +10,8 @@
 
 crabWURCS is a pure-Rust glycoinformatics toolkit with first-class Python and
 command-line interfaces. It converts WURCS 2.0, IUPAC condensed/extended,
-GLYCAM, SMILES, MOL, and SDF; extracts glycans from PDB/mmCIF; and renders SNFG
-SVG or PNG images.
+GLYCAM, SMILES, MOL, and SDF; extracts glycans from PDB/mmCIF; renders SNFG SVG
+or PNG images; and computes masses, compositions and fragment ions.
 
 ## Install
 
@@ -63,6 +63,21 @@ wurcs = crabwurcs.convert(
 )
 normalized = crabwurcs.normalize_wurcs(wurcs)
 png = crabwurcs.render_snfg(wurcs, from_format="wurcs", image_format="png")
+```
+
+Drawing, mass and motif search:
+
+```python
+man5 = crabwurcs.Glycan.parse(
+    "Man(a1-3)[Man(a1-3)[Man(a1-6)]Man(a1-6)]Man(b1-4)GlcNAc(b1-4)GlcNAc"
+)
+man5.render(orientation="root-bottom", reducing_end="Asn")
+man5.render(compact=True)
+
+man5.composition_string()                    # 'HexNAc2Hex5'
+man5.mass(permethylated=True, adduct="Na")   # 1579.78
+man5.contains("NGlycanCore")                 # True, from the motif library
+man5 == crabwurcs.Glycan.parse(man5.to("wurcs"))  # True, whatever the notation
 ```
 
 ## Rust quick start
