@@ -23,7 +23,7 @@ needed.
 
 ```toml
 [dependencies]
-crabwurcs = "0.3.3"
+crabwurcs = "0.4.0"
 ```
 
 ```rust
