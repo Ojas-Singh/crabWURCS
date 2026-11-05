@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-11-05
 
 Drawings can be laid out for a figure, uncertainty is drawn the SNFG way, and
 glycans can be weighed, searched and compared. Everything new is opt-in: the
@@ -102,6 +102,13 @@ structures outside that corpus.
   counted as two bonds, which failed. They are one bond now, from the residue WURCS
   writes first, however the molecule is written. `MolError::AmbiguousGlycanFound`
   no longer says corpus glycans matched, which was only ever one of its causes.
+
+- **IUPAC is read about 90 times faster, and free text cannot crash it.** Every
+  parse compiled about thirty regular expressions, several per residue, and rebuilt
+  the sorted list of registry names for each residue name; both are now built once,
+  so the 1001 GlycoShape sequences parse in tens of milliseconds instead of 1.9 s,
+  with the same WURCS. A name holding a multi-byte character ("two α2,6-linked
+  sialic acids") was sliced inside that character and panicked; it is now refused.
 
 ### API notes for Rust callers
 

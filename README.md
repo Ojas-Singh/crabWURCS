@@ -24,8 +24,8 @@ pip install crabwurcs
 Rust library or CLI:
 
 ```bash
-cargo add crabwurcs@0.3.3
-cargo install crabwurcs-cli@0.3.3
+cargo add crabwurcs@0.4.0
+cargo install crabwurcs-cli@0.4.0
 ```
 
 Prebuilt Python wheels use the stable CPython ABI and do not require RDKit or
